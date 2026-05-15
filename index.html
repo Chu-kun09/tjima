@@ -271,40 +271,89 @@ function serializeG() {
   const clone = JSON.parse(JSON.stringify(G, (k, v) => {
     if (k === 'linkedWith') return v ? v.id : null;
     if (k === 'fn') return undefined;
+    // _7selectModeはローカル状態なので送らない
+    if (k === '_7selectMode') return undefined;
+    if (k === 'selCard' || k === 'selMana' || k === 'atkCard') return null;
     return v;
   }));
+  // shieldsのnull（破壊済み）をFirebaseで保持するため特殊値に変換
+  for (const p of [1,2]) {
+    if (clone.players && clone.players[p] && clone.players[p].shields) {
+      clone.players[p].shields = clone.players[p].shields.map(s => s === null ? '__broken__' : s);
+    }
+  }
   return clone;
 }
 
 // ─ DBからGを復元（linkedWithをオブジェクト参照に戻す）─
 function deserializeG(snap) {
-  G = snap;
-  // linkedWith を id → object に復元
-  const allCards = [];
+  // 深いコピーを作って操作
+  G = JSON.parse(JSON.stringify(snap));
+
+  // ── players のキーを数値に正規化 ──
+  if (G.players) {
+    // '1','2' → 1,2
+    for (const k of ['1','2']) {
+      if (G.players[k] && !G.players[parseInt(k)]) {
+        G.players[parseInt(k)] = G.players[k];
+      }
+    }
+    // 各プレイヤーのゾーンを配列に正規化（nullや未定義を空配列に）
+    for (const p of [1,2]) {
+      const pl = G.players[p];
+      if (!pl) { G.players[p] = {deck:[],hand:[],field:[],mana:[],shields:[],graveyard:[]}; continue; }
+      pl.deck      = normArr(pl.deck);
+      pl.hand      = normArr(pl.hand);
+      pl.field     = normArr(pl.field);
+      pl.mana      = normArr(pl.mana);
+      pl.shields   = normArr(pl.shields).map(s => s === '__broken__' ? null : s);
+      pl.graveyard = normArr(pl.graveyard);
+    }
+  }
+
+  // ── linkedWith を id → object に復元 ──
+  const cardMap = {};
   for (const p of [1,2]) {
     const pl = G.players[p];
     for (const arr of [pl.hand, pl.field, pl.mana, pl.graveyard, pl.shields]) {
-      if (arr) arr.forEach(c => { if (c) allCards.push(c); });
+      arr.forEach(c => { if (c && c.id !== undefined) cardMap[c.id] = c; });
     }
   }
-  const cardMap = {};
-  allCards.forEach(c => { if (c && c.id !== undefined) cardMap[c.id] = c; });
-  allCards.forEach(c => {
-    if (!c) return;
-    if (c.linkedWith !== null && c.linkedWith !== undefined) {
-      c.linkedWith = cardMap[c.linkedWith] || null;
+  for (const p of [1,2]) {
+    const pl = G.players[p];
+    for (const arr of [pl.hand, pl.field, pl.mana, pl.graveyard, pl.shields]) {
+      arr.forEach(c => {
+        if (!c) return;
+        if (c.linkedWith !== null && c.linkedWith !== undefined) {
+          c.linkedWith = typeof c.linkedWith === 'object'
+            ? c.linkedWith
+            : (cardMap[c.linkedWith] || null);
+        }
+      });
     }
-  });
-  // pendingSTはIDベースで復元が難しいのでクリア（STはホスト処理）
-  if (!G.pendingST) G.pendingST = [];
-  // JSONのキーは文字列になるので数値に戻す
-  if(G.players){
-    if(!G.players[1] && G.players['1']) G.players[1] = G.players['1'];
-    if(!G.players[2] && G.players['2']) G.players[2] = G.players['2'];
   }
-  // 数値フィールドを確実に数値型に
-  G.turn = parseInt(G.turn) || 1;
-  if(G._winner) G._winner = parseInt(G._winner);
+
+  // ── 基本フィールドを正規化 ──
+  G.turn        = parseInt(G.turn) || 1;
+  G.pendingST   = normArr(G.pendingST);
+  G.gameOver    = !!G.gameOver;
+  G.selCard     = null;  // ローカル選択状態はリセット
+  G.selMana     = [];
+  G.atkCard     = null;
+  G._7selectMode= null;
+  if (G._winner) G._winner = parseInt(G._winner);
+}
+
+// Firebase JSONでオブジェクトが配列の代わりに使われることへの対応
+function normArr(v) {
+  if (!v) return [];
+  if (Array.isArray(v)) return v.filter(x => x !== undefined);
+  // オブジェクト {0:card, 1:card, ...} 形式を配列に
+  if (typeof v === 'object') {
+    const keys = Object.keys(v).map(Number).filter(n => !isNaN(n)).sort((a,b)=>a-b);
+    return keys.map(k => v[k]).filter(x => x !== undefined && x !== null);
+  }
+  return [];
 }
 
 // ─ 相手の操作を受信して画面更新 ─
@@ -1808,8 +1857,7 @@ window.phaseSummon=phaseSummon;
 window.phaseAttack=phaseAttack;
 window.phaseUntap=phaseUntap;
 window.showLinkMenu=showLinkMenu;
-window.showSummonModal=showSummonModal;
-window.showAttackModal=showAttackModal;
+
 window.showCinfo=showCinfo;
 window.closeModal=closeModal;
 
