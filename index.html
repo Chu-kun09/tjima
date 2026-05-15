@@ -17,7 +17,7 @@ html,body{width:100%;height:100dvh;overflow:hidden;background:var(--bg);color:#e
 /* ─ LAYOUT ─ */
 #game{display:flex;flex-direction:column;width:100%;height:100dvh;}
 .pa{flex:1;display:flex;flex-direction:column;min-height:0;overflow:hidden;}
-#p2-area{transform:rotate(180deg);}
+#p2-area.local-mode { transform: rotate(180deg); }
 #divider{height:3px;flex-shrink:0;background:linear-gradient(90deg,transparent,#4a2d8a,transparent);}
 
 /* ─ HAND ─ */
@@ -37,7 +37,7 @@ html,body{width:100%;height:100dvh;overflow:hidden;background:var(--bg);color:#e
 .zlbl{font-size:8px;color:var(--muted);font-weight:700;white-space:nowrap;text-align:center;}
 
 /* ─ FIELD ─ */
-.field-zone{flex:1;display:flex;align-items:center;gap:5px;flex-wrap:wrap;padding:4px 6px;min-height:56px;border:1px dashed #1e2d4a;border-radius:8px;background:rgba(255,255,255,.015);overflow-x:auto;-webkit-overflow-scrolling:touch;}
+.field-zone{flex:1;display:flex;align-items:center;gap:4px;flex-wrap:wrap;padding:3px 5px;min-height:38px;max-height:80px;border:1px dashed #1e2d4a;border-radius:6px;background:rgba(255,255,255,.015);overflow-y:auto;overflow-x:hidden;-webkit-overflow-scrolling:touch;}
 
 /* ─ SHIELDS ─ */
 .shields-row{display:flex;gap:3px;align-items:center;}
@@ -58,12 +58,12 @@ html,body{width:100%;height:100dvh;overflow:hidden;background:var(--bg);color:#e
 .mc.sel-mana{border-color:#fbbf24;box-shadow:0 0 0 2px #fbbf24;}
 
 /* ─ CARDS ─ */
-.card{width:42px;height:60px;border-radius:7px;display:flex;flex-direction:column;align-items:center;justify-content:center;font-family:'Fredoka One',cursive;cursor:pointer;border:2px solid rgba(255,255,255,.15);transition:transform .12s,filter .12s;flex-shrink:0;overflow:hidden;box-shadow:0 2px 6px rgba(0,0,0,.5);}
+.card{width:36px;height:52px;border-radius:6px;display:flex;flex-direction:column;align-items:center;justify-content:center;font-family:'Fredoka One',cursive;cursor:pointer;border:2px solid rgba(255,255,255,.15);transition:transform .12s,filter .12s;flex-shrink:0;overflow:hidden;box-shadow:0 2px 6px rgba(0,0,0,.5);}
 .card:active{transform:scale(.88);}
-.hand-scroll .card{width:54px;height:76px;border-radius:9px;}
-.hand-scroll .card .cn{font-size:28px;}
-.hand-scroll .card .ci{font-size:12px;}
-.cn{font-size:22px;line-height:1;}.ci{font-size:9px;opacity:.9;}
+.hand-scroll .card{width:52px;height:72px;border-radius:9px;}
+.hand-scroll .card .cn{font-size:26px;}
+.hand-scroll .card .ci{font-size:11px;}
+.cn{font-size:18px;line-height:1;}.ci{font-size:8px;opacity:.9;}
 .card.tapped{transform:rotate(90deg);filter:brightness(.6);}
 .card.linked{border-color:#fbbf24;}
 .card.sel-atk{border-color:#22c55e;box-shadow:0 0 0 3px #22c55e;}
@@ -75,7 +75,8 @@ html,body{width:100%;height:100dvh;overflow:hidden;background:var(--bg);color:#e
 
 /* ─ ACTION BAR ─ */
 #action-bar{position:fixed;bottom:0;left:0;right:0;background:rgba(10,14,26,.97);border-top:2px solid #4a2d8a;padding:6px 10px;padding-bottom:calc(6px + var(--safe-b));z-index:100;backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);}
-#action-bar.top-mode{bottom:auto;top:0;border-top:none;border-bottom:2px solid #4a2d8a;padding-top:calc(6px + var(--safe-t,0px));padding-bottom:6px;transform:rotate(180deg);}
+/* top-mode廃止: オンラインでも常に下 */
+#action-bar.top-mode{bottom:auto;top:0;border-top:none;border-bottom:2px solid #4a2d8a;padding-top:calc(6px + var(--safe-t,0px));padding-bottom:6px;}
 #phase-label{font-size:10px;color:#7c9cca;font-weight:700;letter-spacing:1px;text-align:center;margin-bottom:5px;text-transform:uppercase;}
 #room-badge{font-size:9px;color:#4a2d8a;text-align:center;margin-bottom:2px;letter-spacing:1px;}
 #action-buttons{display:flex;gap:5px;justify-content:center;flex-wrap:wrap;}
@@ -152,32 +153,34 @@ window._fbResolve({ db, ref, set, get, onValue, update, remove });
 <body>
 
 <div id="game">
-  <!-- P2 (top, rotated 180) -->
+  <!-- P2エリア: ローカルは180度回転(local-mode), オンラインは正立 -->
   <div id="p2-area" class="pa">
-    <div class="hand-area">
-      <div class="stat-bar">
-        <div class="tdot off" id="p2-dot"></div><b>P2</b>
-        <span class="sbadge" id="p2-hc">手札0</span>
-        <span class="sbadge" id="p2-mc">マナ0/0</span>
-        <span class="sbadge" id="p2-sc">🛡5</span>
-      </div>
-      <div class="hand-scroll" id="p2-hand"></div>
-    </div>
+    <!-- オンライン正立時: フィールドが上、手札が下（P1と同じ構造） -->
+    <!-- ローカルlocal-mode時: 全体180度回転なので見た目は逆 -->
     <div class="ca">
-      <div class="brow">
-        <span class="zlbl" style="writing-mode:vertical-rl;transform:rotate(180deg)">マナ</span>
-        <div class="mana-zone" id="p2-mana"></div>
-      </div>
-      <div class="brow" style="gap:10px;padding-left:2px">
-        <div><div class="zlbl" style="text-align:left;margin-bottom:2px">シールド</div><div class="shields-row" id="p2-shields"></div></div>
-        <div class="sidecol"><div class="zlbl">デッキ</div><div class="pile deck-pile" id="p2-deck-pile"><span id="p2-dc">0</span></div></div>
-      </div>
       <div class="brow fr">
         <div style="flex:1;display:flex;flex-direction:column;min-height:0">
           <div class="zlbl" style="text-align:left;margin-bottom:2px">フィールド</div>
           <div class="field-zone" id="p2-field"></div>
         </div>
         <div class="sidecol"><div class="zlbl">墓地</div><div class="pile grave-pile" id="p2-grave" onclick="showGrave(2)"><span id="p2-gc">0</span></div></div>
+      </div>
+      <div class="brow" style="gap:10px;padding-left:2px">
+        <div><div class="zlbl" style="text-align:left;margin-bottom:2px">シールド</div><div class="shields-row" id="p2-shields"></div></div>
+        <div class="sidecol"><div class="zlbl">デッキ</div><div class="pile deck-pile" id="p2-deck-pile"><span id="p2-dc">0</span></div></div>
+      </div>
+      <div class="brow">
+        <span class="zlbl" style="writing-mode:vertical-rl">マナ</span>
+        <div class="mana-zone" id="p2-mana"></div>
+      </div>
+    </div>
+    <div class="hand-area">
+      <div class="hand-scroll" id="p2-hand"></div>
+      <div class="stat-bar" style="margin-top:2px">
+        <div class="tdot off" id="p2-dot"></div><b>P2</b>
+        <span class="sbadge" id="p2-hc">手札0</span>
+        <span class="sbadge" id="p2-mc">マナ0/0</span>
+        <span class="sbadge" id="p2-sc">🛡5</span>
       </div>
     </div>
   </div>
@@ -491,11 +494,19 @@ function phaseUntap(){
   const pl=G.players[G.turn];
   pl.field.forEach(c=>{c.tapped=false;c.summonedThisTurn=false;});
   pl.mana.forEach(c=>c.tapped=false);
-  // バー位置: オンラインは自分のmyPlayerで固定、ローカルはターンに応じて
+  // バー: オンラインは常に下。ローカルはP2ターンのみ上
   const bar=document.getElementById('action-bar');
   if(bar){
-    const isP2side=ONLINE.enabled?(ONLINE.myPlayer===2):(G.turn===2);
-    bar.classList.toggle('top-mode',isP2side);
+    if(ONLINE.enabled){
+      bar.classList.remove('top-mode'); // オンラインは常に下
+    }else{
+      bar.classList.toggle('top-mode', G.turn===2);
+    }
+  }
+  // P2エリア: ローカルは180度回転、オンラインは正立
+  const p2area=document.getElementById('p2-area');
+  if(p2area){
+    p2area.classList.toggle('local-mode', !ONLINE.enabled);
   }
   renderAll();
   adjustLayout();
@@ -1490,10 +1501,12 @@ function cardHTML(card,zone,p){
 
 function renderHand(p){
   const el=document.getElementById(`p${p}-hand`);
-  // 自分のプレイヤー番号に合わせて表示制御
-  const showFront=ONLINE.enabled
-    ? (p===ONLINE.myPlayer)           // オンライン: 自分の手札だけ表向き
-    : (p===G.turn);                   // ローカル: 現在ターンのプレイヤーが表向き
+  let showFront;
+  if(ONLINE.enabled){
+    showFront=(p===ONLINE.myPlayer); // 自分の手札のみ表向き（常に）
+  }else{
+    showFront=(p===G.turn); // ローカル: 現在ターンのプレイヤーが表向き
+  }
   el.innerHTML=showFront
     ?G.players[p].hand.map(c=>cardHTML(c,'hand',p)).join('')
     :G.players[p].hand.map(()=>`<div class="card card-back">🂠</div>`).join('');
@@ -1680,34 +1693,22 @@ function adjustLayout(){
     const bar=document.getElementById('action-bar');if(!bar)return;
     const h=bar.offsetHeight;
     document.documentElement.style.setProperty('--bar-h',h+'px');
+    const ha1=document.querySelector('#p1-area .hand-area');
+    const ha2=document.querySelector('#p2-area .hand-area');
     if(ONLINE.enabled){
-      // オンライン: 自分が2なら常にバーを上に
-      const myP=ONLINE.myPlayer||G.turn;
-      if(myP===2){
-        bar.classList.add('top-mode');
-        const ha2=document.querySelector('#p2-area .hand-area');
-        if(ha2)ha2.style.paddingBottom=(h+4)+'px';
-        const ha1=document.querySelector('#p1-area .hand-area');
-        if(ha1)ha1.style.paddingBottom='4px';
-      }else{
-        bar.classList.remove('top-mode');
-        const ha1=document.querySelector('#p1-area .hand-area');
-        if(ha1)ha1.style.paddingBottom=(h+4)+'px';
-        const ha2=document.querySelector('#p2-area .hand-area');
-        if(ha2)ha2.style.paddingBottom='4px';
-      }
+      // オンライン: バーは常に下。P1・P2どちらもP1エリア下に余白
+      bar.classList.remove('top-mode');
+      if(ha1)ha1.style.paddingBottom=(h+4)+'px';
+      if(ha2)ha2.style.paddingBottom='4px';
     }else{
+      // ローカル: P2ターンはバーを上に
       if(G.turn===2){
         bar.classList.add('top-mode');
-        const ha2=document.querySelector('#p2-area .hand-area');
         if(ha2)ha2.style.paddingBottom=(h+4)+'px';
-        const ha1=document.querySelector('#p1-area .hand-area');
         if(ha1)ha1.style.paddingBottom='4px';
       }else{
         bar.classList.remove('top-mode');
-        const ha1=document.querySelector('#p1-area .hand-area');
         if(ha1)ha1.style.paddingBottom=(h+4)+'px';
-        const ha2=document.querySelector('#p2-area .hand-area');
         if(ha2)ha2.style.paddingBottom='4px';
       }
     }
