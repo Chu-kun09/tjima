@@ -266,52 +266,83 @@ function pushState() {
   set(ref(db, `rooms/${ONLINE.roomId}/state`), snap).catch(e => console.error('pushState', e));
 }
 
-// ─ G をJSONシリアライズ（循環参照のlinkedWithをIDに変換）─
+// ─ シリアライズ: FirebaseのJSON制限を回避 ─
+// Firebase は null 値と配列インデックスを削除するため
+// shields の null を -1 (整数) に、linkedWith をIDに変換
 function serializeG() {
-  const clone = JSON.parse(JSON.stringify(G, (k, v) => {
-    if (k === 'linkedWith') return v ? v.id : null;
-    if (k === 'fn') return undefined;
-    // _7selectModeはローカル状態なので送らない
-    if (k === '_7selectMode') return undefined;
-    if (k === 'selCard' || k === 'selMana' || k === 'atkCard') return null;
+  // まずG全体を安全にコピー（循環参照除去）
+  const seen = new WeakSet();
+  const raw = JSON.parse(JSON.stringify(G, (k, v) => {
+    if (k === 'linkedWith') return (v && typeof v === 'object') ? v.id : null;
+    if (k === '_7selectMode' || k === 'fn') return undefined;
+    if (k === 'selCard' || k === 'atkCard') return null;
+    if (k === 'selMana') return [];
     return v;
   }));
-  // shieldsのnull（破壊済み）をFirebaseで保持するため特殊値に変換
-  for (const p of [1,2]) {
-    if (clone.players && clone.players[p] && clone.players[p].shields) {
-      clone.players[p].shields = clone.players[p].shields.map(s => s === null ? '__broken__' : s);
-    }
+  // shields の null を -1 に変換（Firebase が null を配列から削除するため）
+  for (const p of ['1','2',1,2]) {
+    const pl = raw.players && raw.players[p];
+    if (!pl || !pl.shields) continue;
+    pl.shields = pl.shields.map(s => (s === null || s === undefined) ? -1 : s);
   }
-  return clone;
+  return raw;
 }
 
-// ─ DBからGを復元（linkedWithをオブジェクト参照に戻す）─
+// ─ デシリアライズ: Firebaseから受け取ったデータをGに復元 ─
 function deserializeG(snap) {
-  // 深いコピーを作って操作
-  G = JSON.parse(JSON.stringify(snap));
+  // 文字列化→再パースで完全な独立コピーを作成
+  const raw = JSON.parse(JSON.stringify(snap));
 
-  // ── players のキーを数値に正規化 ──
-  if (G.players) {
-    // '1','2' → 1,2
-    for (const k of ['1','2']) {
-      if (G.players[k] && !G.players[parseInt(k)]) {
-        G.players[parseInt(k)] = G.players[k];
-      }
+  // players を必ず {1:..., 2:...} の数値キーで取得
+  const rawP = raw.players || {};
+  const p1raw = rawP[1] || rawP['1'] || {};
+  const p2raw = rawP[2] || rawP['2'] || {};
+
+  // ゾーン配列を安全に変換（Firebaseがオブジェクト化した配列も対応）
+  function toArr(v) {
+    if (!v) return [];
+    if (Array.isArray(v)) return v;
+    // {0:x, 1:y, ...} 形式のオブジェクト
+    if (typeof v === 'object') {
+      const maxKey = Math.max(...Object.keys(v).map(Number).filter(n => !isNaN(n)));
+      const arr = [];
+      for (let i = 0; i <= maxKey; i++) arr.push(v[i] !== undefined ? v[i] : null);
+      return arr;
     }
-    // 各プレイヤーのゾーンを配列に正規化（nullや未定義を空配列に）
-    for (const p of [1,2]) {
-      const pl = G.players[p];
-      if (!pl) { G.players[p] = {deck:[],hand:[],field:[],mana:[],shields:[],graveyard:[]}; continue; }
-      pl.deck      = normArr(pl.deck);
-      pl.hand      = normArr(pl.hand);
-      pl.field     = normArr(pl.field);
-      pl.mana      = normArr(pl.mana);
-      pl.shields   = normArr(pl.shields).map(s => s === '__broken__' ? null : s);
-      pl.graveyard = normArr(pl.graveyard);
-    }
+    return [];
   }
 
-  // ── linkedWith を id → object に復元 ──
+  function makePlayer(pr) {
+    return {
+      deck:      toArr(pr.deck),
+      hand:      toArr(pr.hand),
+      field:     toArr(pr.field),
+      mana:      toArr(pr.mana),
+      shields:   toArr(pr.shields).map(s => (s === -1 || s === null || s === undefined) ? null : s),
+      graveyard: toArr(pr.graveyard),
+    };
+  }
+
+  G = {
+    turn:        parseInt(raw.turn) || 1,
+    phase:       raw.phase || 'setup',
+    isFirstTurn: !!raw.isFirstTurn,
+    pendingST:   toArr(raw.pendingST),
+    gameOver:    !!raw.gameOver,
+    _winner:     raw._winner ? parseInt(raw._winner) : null,
+    _winReason:  raw._winReason || '',
+    _pushSeq:    raw._seq || 0,
+    selCard:     null,
+    selMana:     [],
+    atkCard:     null,
+    _7selectMode:null,
+    players: {
+      1: makePlayer(p1raw),
+      2: makePlayer(p2raw),
+    },
+  };
+
+  // linkedWith: ID → カードオブジェクト に復元
   const cardMap = {};
   for (const p of [1,2]) {
     const pl = G.players[p];
@@ -323,37 +354,11 @@ function deserializeG(snap) {
     const pl = G.players[p];
     for (const arr of [pl.hand, pl.field, pl.mana, pl.graveyard, pl.shields]) {
       arr.forEach(c => {
-        if (!c) return;
-        if (c.linkedWith !== null && c.linkedWith !== undefined) {
-          c.linkedWith = typeof c.linkedWith === 'object'
-            ? c.linkedWith
-            : (cardMap[c.linkedWith] || null);
-        }
+        if (!c || c.linkedWith === undefined || c.linkedWith === null) return;
+        c.linkedWith = (typeof c.linkedWith === 'number') ? (cardMap[c.linkedWith] || null) : null;
       });
     }
   }
-
-  // ── 基本フィールドを正規化 ──
-  G.turn        = parseInt(G.turn) || 1;
-  G.pendingST   = normArr(G.pendingST);
-  G.gameOver    = !!G.gameOver;
-  G.selCard     = null;  // ローカル選択状態はリセット
-  G.selMana     = [];
-  G.atkCard     = null;
-  G._7selectMode= null;
-  if (G._winner) G._winner = parseInt(G._winner);
-}
-
-// Firebase JSONでオブジェクトが配列の代わりに使われることへの対応
-function normArr(v) {
-  if (!v) return [];
-  if (Array.isArray(v)) return v.filter(x => x !== undefined);
-  // オブジェクト {0:card, 1:card, ...} 形式を配列に
-  if (typeof v === 'object') {
-    const keys = Object.keys(v).map(Number).filter(n => !isNaN(n)).sort((a,b)=>a-b);
-    return keys.map(k => v[k]).filter(x => x !== undefined && x !== null);
-  }
-  return [];
 }
 
 // ─ 相手の操作を受信して画面更新 ─
