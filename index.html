@@ -297,44 +297,53 @@ function deserializeG(snap) {
   // pendingSTはIDベースで復元が難しいのでクリア（STはホスト処理）
   if (!G.pendingST) G.pendingST = [];
   // JSONのキーは文字列になるので数値に戻す
-  if(G.players && G.players['1'] && !G.players[1]){
-    G.players[1]=G.players['1'];
-    G.players[2]=G.players['2'];
+  if(G.players){
+    if(!G.players[1] && G.players['1']) G.players[1] = G.players['1'];
+    if(!G.players[2] && G.players['2']) G.players[2] = G.players['2'];
   }
-  // turn も数値に
-  if(typeof G.turn === 'string') G.turn = parseInt(G.turn);
+  // 数値フィールドを確実に数値型に
+  G.turn = parseInt(G.turn) || 1;
+  if(G._winner) G._winner = parseInt(G._winner);
 }
 
 // ─ 相手の操作を受信して画面更新 ─
 function subscribeRoom(roomId) {
   if (ONLINE.unsubscribe) ONLINE.unsubscribe();
   const stateRef = ref(db, `rooms/${roomId}/state`);
-  let lastProcessed = null;
+  let lastSeq = -1;
   const unsub = onValue(stateRef, snapshot => {
     const data = snapshot.val();
     if (!data) return;
 
-    // 重複処理防止（自分がpushしたデータが即返ってくる場合）
-    const dataStr = JSON.stringify({turn:data.turn, phase:data.phase, seq:data._seq});
-    if (dataStr === lastProcessed) return;
-    lastProcessed = dataStr;
+    // 自分がpushしたseqなら無視（自分の操作は既にローカルで反映済み）
+    const seq = data._seq || 0;
+    if (seq === lastSeq) return;
+    lastSeq = seq;
 
+    // JSONキーを正規化してからdeserialize
     deserializeG(data);
     renderAll();
     adjustLayout();
 
-    // 自分のターンになった → phaseUntapから開始
-    if (data.turn === ONLINE.myPlayer) {
-      // ゲーム終了の場合はwinGameを呼ぶ
-      if (data.gameOver) {
-        const winner = data._winner || data.turn;
-        winGame(winner, data._winReason || '');
-        return;
-      }
+    // ゲーム終了チェック
+    if (G.gameOver) {
+      const winner = G._winner || G.turn;
+      document.getElementById('win-title').textContent = `🎉 P${winner} の勝利！`;
+      document.getElementById('win-sub').textContent = G._winReason || '';
+      document.getElementById('win-screen').classList.add('show');
+      return;
+    }
+
+    // turnを数値として比較（JSONで文字列になることがある）
+    const currentTurn = parseInt(G.turn);
+    const myP = parseInt(ONLINE.myPlayer);
+
+    if (currentTurn === myP) {
+      // 自分のターンになった → アンタップから開始
       setTimeout(() => phaseUntap(), 300);
     } else {
-      // 相手のターン中: 表示だけ更新
-      setBar(`P${data.turn}のターン — 相手の番です`,[]);
+      // 相手のターン → 待機表示
+      setBar(`P${currentTurn}のターン — 相手の番です`, []);
     }
   });
   ONLINE.unsubscribe = () => unsub();
@@ -417,6 +426,11 @@ function startGame(){
 }
 
 function phaseUntap(){
+  // オンラインで自分のターンでないなら何もしない
+  if(ONLINE.enabled && parseInt(G.turn) !== parseInt(ONLINE.myPlayer)) {
+    setBar(`P${G.turn}のターン — 相手の番です`,[]);
+    return;
+  }
   G.phase='untap';G.selCard=null;G.selMana=[];G.atkCard=null;
   const pl=G.players[G.turn];
   pl.field.forEach(c=>{c.tapped=false;c.summonedThisTurn=false;});
@@ -440,7 +454,6 @@ function phaseDraw(){
   const card=G.players[G.turn].deck.pop();
   G.players[G.turn].hand.push(card);
   fxDraw(G.turn,card);
-  pushState();
   renderAll();
   setBar(`P${G.turn} — ドロー`,[]);
   setTimeout(phaseCharge,800);
@@ -1712,6 +1725,8 @@ async function createRoom(){
       pushState();
       subscribeRoom(roomId);
       renderAll();
+      // P1はターン1から開始。subscribeは自分のseqを無視するので
+      // phaseUntapはローカルで直接呼ぶ
       phaseUntap();
     }
   });
