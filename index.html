@@ -262,7 +262,7 @@ function pushState() {
   if (!ONLINE.enabled || !ONLINE.roomId || !db) return;
   const snap = serializeG();
   snap._seq = ++_pushSeq;
-  ONLINE._lastPush = _pushSeq; // subscribeRoom側でスキップ判定に使う
+  snap._pusher = ONLINE.myPlayer; // 誰がpushしたか記録
   set(ref(db, `rooms/${ONLINE.roomId}/state`), snap).catch(e => console.error('pushState', e));
 }
 
@@ -370,24 +370,18 @@ function subscribeRoom(roomId) {
   let lastMyPush = -1; // 自分がpushした最後のseq
   const unsub = onValue(stateRef, snapshot => {
     const data = snapshot.val();
-    console.log('[subscribe] received data:', data ? {turn:data.turn, phase:data.phase, seq:data._seq, gameOver:data.gameOver} : null);
     if (!data) return;
 
-    const seq = data._seq || 0;
     const myP = parseInt(ONLINE.myPlayer);
-    const dataTurn = parseInt(data.turn);
-    const lastMyPush = ONLINE._lastPush || 0;
+    const pusher = parseInt(data._pusher || 0);
 
-    console.log('[subscribe] myP='+myP+' dataTurn='+dataTurn+' seq='+seq+' lastMyPush='+lastMyPush);
-
-    // 自分がpushした直後の折り返しは無視
-    if (dataTurn === myP && seq === lastMyPush && lastMyPush > 0) {
-      console.log('[subscribe] SKIP own push');
+    // 自分がpushしたデータが折り返してきた場合はスキップ
+    // （自分の操作はローカルで既に反映済みなので二重処理しない）
+    if (pusher === myP) {
       return;
     }
 
     deserializeG(data);
-    console.log('[subscribe] after deserialize: G.turn='+G.turn+' G.players keys='+Object.keys(G.players));
     renderAll();
     adjustLayout();
 
@@ -400,11 +394,12 @@ function subscribeRoom(roomId) {
     }
 
     const currentTurn = parseInt(G.turn);
-    console.log('[subscribe] currentTurn='+currentTurn+' myP='+myP+' -> '+(currentTurn===myP?'MY TURN':'WAIT'));
 
     if (currentTurn === myP) {
+      // 自分のターンになった → アンタップ開始
       setTimeout(() => phaseUntap(), 300);
     } else {
+      // 相手のターン → 待機表示
       setBar(`P${currentTurn}のターン — 相手の番です`, []);
     }
   });
@@ -488,9 +483,7 @@ function startGame(){
 }
 
 function phaseUntap(){
-  console.log('[phaseUntap] called: G.turn='+G.turn+' ONLINE.myPlayer='+ONLINE.myPlayer+' ONLINE.enabled='+ONLINE.enabled);
   if(ONLINE.enabled && parseInt(G.turn) !== parseInt(ONLINE.myPlayer)) {
-    console.log('[phaseUntap] blocked - not my turn');
     setBar(`P${G.turn}のターン — 相手の番です`,[]);
     return;
   }
@@ -1784,10 +1777,8 @@ async function createRoom(){
       unsub2();
       closeModal();
       toast('相手が参加しました！ゲーム開始！');
-      console.log('[createRoom] guest joined, starting game as P1');
       initGame();
       pushState();
-      console.log('[createRoom] pushed state seq='+_pushSeq+' ONLINE._lastPush='+ONLINE._lastPush);
       subscribeRoom(roomId);
       renderAll();
       phaseUntap();
@@ -1833,7 +1824,6 @@ async function joinRoom(roomId){
   ONLINE.myPlayer=2;
   await set(ref(db,`rooms/${roomId}/guest`),'joined');
   closeModal();
-  console.log('[joinRoom] joined as P2, roomId='+roomId+' myPlayer='+ONLINE.myPlayer);
   toast('参加しました！ゲーム開始まで少々お待ちください...');
   subscribeRoom(roomId);
 }
