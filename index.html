@@ -132,6 +132,22 @@ html,body{width:100%;height:100dvh;overflow:hidden;background:var(--bg);color:#e
 .fx-direct{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none;animation:fx-dir 1.4s ease-out forwards;}
 @keyframes fx-dir{0%{opacity:0;}20%{opacity:1;}80%{opacity:1;}100%{opacity:0;}}
 </style>
+<script type="module">
+import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js';
+import { getDatabase, ref, set, get, onValue, update, remove } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js';
+const firebaseConfig = {
+  apiKey: "AIzaSyAgq5kJdIZlTQ5TJcRg2N7e_jecn3tYttg",
+  authDomain: "tjima-8b1bd.firebaseapp.com",
+  projectId: "tjima-8b1bd",
+  databaseURL: "https://tjima-8b1bd-default-rtdb.firebaseio.com",
+  storageBucket: "tjima-8b1bd.firebasestorage.app",
+  messagingSenderId: "876617970396",
+  appId: "1:876617970396:web:943230b9b4cae45873ba19"
+};
+const fbApp = initializeApp(firebaseConfig);
+const db = getDatabase(fbApp);
+window._fbResolve({ db, ref, set, get, onValue, update, remove });
+</script>
 </head>
 <body>
 
@@ -224,26 +240,13 @@ html,body{width:100%;height:100dvh;overflow:hidden;background:var(--bg);color:#e
   <button class="btn p" style="font-size:17px;padding:12px 36px;margin-top:10px" onclick="retryGame()">もう一度</button>
 </div>
 
-<script type="module">
+<script>
 'use strict';
 
-// ═══════════════════════════════════
-//  Firebase セットアップ
-// ═══════════════════════════════════
-import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js';
-import { getDatabase, ref, set, get, onValue, update, remove } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js';
-
-const firebaseConfig = {
-  apiKey: "AIzaSyAgq5kJdIZlTQ5TJcRg2N7e_jecn3tYttg",
-  authDomain: "tjima-8b1bd.firebaseapp.com",
-  projectId: "tjima-8b1bd",
-  databaseURL: "https://tjima-8b1bd-default-rtdb.firebaseio.com",
-  storageBucket: "tjima-8b1bd.firebasestorage.app",
-  messagingSenderId: "876617970396",
-  appId: "1:876617970896:web:943230b9b4cae45873ba19"
-};
-const fbApp = initializeApp(firebaseConfig);
-const db = getDatabase(fbApp);
+// ── Firebase はwindow経由で受け取る（head内moduleで初期化）──
+let db, ref, set, get, onValue, remove;
+window._fbReady = new Promise(resolve => { window._fbResolve = resolve; });
+window._fbReady.then(fb => { db=fb.db; ref=fb.ref; set=fb.set; get=fb.get; onValue=fb.onValue; remove=fb.remove; });
 
 // ─ オンライン対戦状態 ─
 let ONLINE = {
@@ -255,7 +258,7 @@ let ONLINE = {
 
 // ─ DBへ状態をプッシュ（自分のターンの操作後に呼ぶ）─
 function pushState() {
-  if (!ONLINE.enabled || !ONLINE.roomId) return;
+  if (!ONLINE.enabled || !ONLINE.roomId || !db) return;
   const snap = serializeG();
   set(ref(db, `rooms/${ONLINE.roomId}/state`), snap).catch(e => console.error('pushState', e));
 }
@@ -1652,6 +1655,7 @@ function generateRoomId(){
 }
 
 async function createRoom(){
+  if(!db){await window._fbReady;}
   const roomId=generateRoomId();
   ONLINE.enabled=true;
   ONLINE.roomId=roomId;
@@ -1669,9 +1673,10 @@ async function createRoom(){
   document.getElementById('modal-title').textContent=`ルームID: ${roomId}`;
   // 相手が参加するのを待つ
   const guestRef=ref(db,`rooms/${roomId}/guest`);
-  const unsub=onValue(guestRef,snap=>{
+  let unsub2;
+  unsub2=onValue(guestRef,snap=>{
     if(snap.val()==='joined'){
-      unsub();
+      unsub2();
       closeModal();
       toast('相手が参加しました！ゲーム開始！');
       initGame();
@@ -1712,6 +1717,7 @@ function joinRoomPrompt(){
 }
 
 async function joinRoom(roomId){
+  if(!db){await window._fbReady;}
   const hostSnap=await get(ref(db,`rooms/${roomId}/host`));
   if(!hostSnap.exists()){toast('ルームが見つかりません');return;}
   ONLINE.enabled=true;
@@ -1726,6 +1732,32 @@ async function joinRoom(roomId){
 
 // ─ endTurnでpushState ─
 // ─ 各フェーズ終了時にpushState ─
+
+// モジュールスコープの関数をwindowに公開（HTML側onclickから呼べるように）
+window.showTitleScreen=showTitleScreen;
+window.startOffline=startOffline;
+window.showOnlineMenu=showOnlineMenu;
+window.startGame=startGame;
+window.retryGame=retryGame;
+window.showGrave=showGrave;
+window.selectHandForCharge=selectHandForCharge;
+window.selectHandForSummon=selectHandForSummon;
+window.selectFieldForAttack=selectFieldForAttack;
+window.on7FieldTap=on7FieldTap;
+window.doCharge=doCharge;
+window.doSummonSelected=doSummonSelected;
+window.doAttackSelected=doAttackSelected;
+window.endTurn=endTurn;
+window.phaseDraw=phaseDraw;
+window.phaseCharge=phaseCharge;
+window.phaseSummon=phaseSummon;
+window.phaseAttack=phaseAttack;
+window.phaseUntap=phaseUntap;
+window.showLinkMenu=showLinkMenu;
+window.showSummonModal=showSummonModal;
+window.showAttackModal=showAttackModal;
+window.showCinfo=showCinfo;
+window.closeModal=closeModal;
 
 showTitleScreen();
 </script>
