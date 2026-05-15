@@ -262,6 +262,7 @@ function pushState() {
   if (!ONLINE.enabled || !ONLINE.roomId || !db) return;
   const snap = serializeG();
   snap._seq = ++_pushSeq;
+  ONLINE._lastPush = _pushSeq; // subscribeRoom側でスキップ判定に使う
   set(ref(db, `rooms/${ONLINE.roomId}/state`), snap).catch(e => console.error('pushState', e));
 }
 
@@ -310,17 +311,21 @@ function deserializeG(snap) {
 function subscribeRoom(roomId) {
   if (ONLINE.unsubscribe) ONLINE.unsubscribe();
   const stateRef = ref(db, `rooms/${roomId}/state`);
-  let lastSeq = -1;
+  // myPlayerが1(ホスト)は自分がpushしたseqをスキップ
+  // myPlayerが2(ゲスト)は全て処理（最初のstateも含む）
+  let lastMyPush = -1; // 自分がpushした最後のseq
   const unsub = onValue(stateRef, snapshot => {
     const data = snapshot.val();
     if (!data) return;
 
-    // 自分がpushしたseqなら無視（自分の操作は既にローカルで反映済み）
     const seq = data._seq || 0;
-    if (seq === lastSeq) return;
-    lastSeq = seq;
+    const myP = parseInt(ONLINE.myPlayer);
+    const dataTurn = parseInt(data.turn);
 
-    // JSONキーを正規化してからdeserialize
+    // 自分がpushした直後の折り返しは無視
+    const lastMyPush = ONLINE._lastPush || 0;
+    if (dataTurn === myP && seq === lastMyPush && lastMyPush > 0) return;
+
     deserializeG(data);
     renderAll();
     adjustLayout();
@@ -334,15 +339,13 @@ function subscribeRoom(roomId) {
       return;
     }
 
-    // turnを数値として比較（JSONで文字列になることがある）
     const currentTurn = parseInt(G.turn);
-    const myP = parseInt(ONLINE.myPlayer);
 
     if (currentTurn === myP) {
-      // 自分のターンになった → アンタップから開始
+      // 自分のターンになった → アンタップ
       setTimeout(() => phaseUntap(), 300);
     } else {
-      // 相手のターン → 待機表示
+      // 相手のターン → 待機
       setBar(`P${currentTurn}のターン — 相手の番です`, []);
     }
   });
@@ -1127,7 +1130,7 @@ function breakShield(targetP,sc){
     processST();
   }else{
     G.players[targetP].hand.push(sc);
-    toast(`P${targetP}: シールド→手札（${CJ[sc.color]}${sc.num}）`);
+    toast(`P${targetP}: シールド→手札に加えた`);
   }
 }
 function checkDirect(targetP,attP){
