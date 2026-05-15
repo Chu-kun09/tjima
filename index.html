@@ -257,9 +257,11 @@ let ONLINE = {
 };
 
 // ─ DBへ状態をプッシュ（自分のターンの操作後に呼ぶ）─
+let _pushSeq = 0;
 function pushState() {
   if (!ONLINE.enabled || !ONLINE.roomId || !db) return;
   const snap = serializeG();
+  snap._seq = ++_pushSeq;
   set(ref(db, `rooms/${ONLINE.roomId}/state`), snap).catch(e => console.error('pushState', e));
 }
 
@@ -294,30 +296,48 @@ function deserializeG(snap) {
   });
   // pendingSTはIDベースで復元が難しいのでクリア（STはホスト処理）
   if (!G.pendingST) G.pendingST = [];
-  // 整数キーをintに戻す
-  if(G.players['1']){G.players[1]=G.players['1'];G.players[2]=G.players['2'];}
+  // JSONのキーは文字列になるので数値に戻す
+  if(G.players && G.players['1'] && !G.players[1]){
+    G.players[1]=G.players['1'];
+    G.players[2]=G.players['2'];
+  }
+  // turn も数値に
+  if(typeof G.turn === 'string') G.turn = parseInt(G.turn);
 }
 
-// ─ 相手のターンのとき受信して画面更新 ─
+// ─ 相手の操作を受信して画面更新 ─
 function subscribeRoom(roomId) {
   if (ONLINE.unsubscribe) ONLINE.unsubscribe();
   const stateRef = ref(db, `rooms/${roomId}/state`);
+  let lastProcessed = null;
   const unsub = onValue(stateRef, snapshot => {
     const data = snapshot.val();
     if (!data) return;
-    // 自分が送ったデータなら無視
-    if (data.turn === ONLINE.myPlayer && data.phase !== 'untap') return;
+
+    // 重複処理防止（自分がpushしたデータが即返ってくる場合）
+    const dataStr = JSON.stringify({turn:data.turn, phase:data.phase, seq:data._seq});
+    if (dataStr === lastProcessed) return;
+    lastProcessed = dataStr;
+
     deserializeG(data);
     renderAll();
     adjustLayout();
-    // 自分のターンになったらフェーズを継続
+
+    // 自分のターンになった → phaseUntapから開始
     if (data.turn === ONLINE.myPlayer) {
-      if (data.phase === 'untap') phaseUntap();
+      // ゲーム終了の場合はwinGameを呼ぶ
+      if (data.gameOver) {
+        const winner = data._winner || data.turn;
+        winGame(winner, data._winReason || '');
+        return;
+      }
+      setTimeout(() => phaseUntap(), 300);
     } else {
-      setBar(`P${data.turn}のターン — 相手の番です`, []);
+      // 相手のターン中: 表示だけ更新
+      setBar(`P${data.turn}のターン — 相手の番です`,[]);
     }
   });
-  ONLINE.unsubscribe = () => unsub(); // Firebase onValueはunsubscribe関数を返す
+  ONLINE.unsubscribe = () => unsub();
 }
 
 // ─ オンライン時のアクションバー制御 ─
@@ -401,12 +421,11 @@ function phaseUntap(){
   const pl=G.players[G.turn];
   pl.field.forEach(c=>{c.tapped=false;c.summonedThisTurn=false;});
   pl.mana.forEach(c=>c.tapped=false);
-  // バー位置: ローカルはターンに応じて、オンラインは自分のプレイヤー番号で固定
+  // バー位置: オンラインは自分のmyPlayerで固定、ローカルはターンに応じて
   const bar=document.getElementById('action-bar');
   if(bar){
-    const p2side=ONLINE.enabled?(ONLINE.myPlayer===2):(G.turn===2);
-    if(p2side){bar.classList.add('top-mode');}
-    else{bar.classList.remove('top-mode');}
+    const isP2side=ONLINE.enabled?(ONLINE.myPlayer===2):(G.turn===2);
+    bar.classList.toggle('top-mode',isP2side);
   }
   renderAll();
   adjustLayout();
@@ -775,8 +794,15 @@ function showHirabonAttackDiscard(p){
 function endTurn(){
   closeModal();G.atkCard=null;G.selCard=null;G.selMana=[];
   G.turn=G.turn===1?2:1;
-  pushState(); // オンライン: 状態を相手に送信
-  renderAll();phaseUntap();
+  if(ONLINE.enabled){
+    // オンライン: 自分側はpushStateして待機。相手側のsubscribeがphaseUntapを呼ぶ
+    pushState();
+    renderAll();
+    setBar(`P${G.turn}のターン — 相手の番です`,[]);
+    adjustLayout();
+  }else{
+    phaseUntap();
+  }
 }
 
 // ═══════════════════════════════════
@@ -1198,7 +1224,10 @@ function checkExTjia(p){
   }
 }
 function winGame(p,reason){
+  if(G.gameOver)return; // 重複防止
   G.gameOver=true;
+  G._winner=p;
+  G._winReason=reason;
   pushState();
   document.getElementById('win-title').textContent=`🎉 P${p} の勝利！`;
   document.getElementById('win-sub').textContent=reason;
@@ -1698,13 +1727,14 @@ function joinRoomPrompt(){
       style="width:100%;padding:12px;border-radius:10px;border:2px solid #4a2d8a;
       background:#0e1225;color:#fff;font-size:20px;font-family:'Fredoka One',cursive;
       text-align:center;letter-spacing:4px;text-transform:uppercase;margin:8px 0;"
-      oninput="this.value=this.value.toUpperCase()" maxlength="5">
+      maxlength="5" autocomplete="off" autocorrect="off" autocapitalize="characters" spellcheck="false">
   `;
   document.getElementById('modal-btns').innerHTML='';
   const joinBtn=document.createElement('button');
   joinBtn.className='btn g';joinBtn.textContent='参加する';
   joinBtn.onclick=async()=>{
-    const id=document.getElementById('room-input').value.trim().toUpperCase();
+    const raw=document.getElementById('room-input').value;
+    const id=raw.replace(/[^a-zA-Z0-9]/g,'').toUpperCase().slice(0,5);
     if(id.length<3){toast('IDを入力してください');return;}
     await joinRoom(id);
   };
