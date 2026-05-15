@@ -23,6 +23,8 @@ html,body{width:100%;height:100dvh;overflow:hidden;background:var(--bg);color:#e
 /* ─ HAND ─ */
 .hand-area{flex-shrink:0;background:rgba(74,45,138,.12);border-top:1px solid rgba(74,45,138,.4);}
 #p1-area .hand-area{padding-bottom:4px;}
+#p2-hand-area{border-top:none;border-bottom:1px solid rgba(74,45,138,.4);}
+#p2-area.local-mode #p2-hand-area{border-top:1px solid rgba(74,45,138,.4);border-bottom:none;}
 .hand-scroll{display:flex;gap:6px;overflow-x:auto;padding:6px 8px 4px;min-height:82px;align-items:flex-end;scrollbar-width:none;-webkit-overflow-scrolling:touch;}
 .hand-scroll::-webkit-scrollbar{display:none;}
 .stat-bar{display:flex;align-items:center;gap:6px;padding:2px 8px;font-size:10px;color:var(--muted);}
@@ -75,7 +77,6 @@ html,body{width:100%;height:100dvh;overflow:hidden;background:var(--bg);color:#e
 
 /* ─ ACTION BAR ─ */
 #action-bar{position:fixed;bottom:0;left:0;right:0;background:rgba(10,14,26,.97);border-top:2px solid #4a2d8a;padding:6px 10px;padding-bottom:calc(6px + var(--safe-b));z-index:100;backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);}
-/* top-mode廃止: オンラインでも常に下 */
 #action-bar.top-mode{bottom:auto;top:0;border-top:none;border-bottom:2px solid #4a2d8a;padding-top:calc(6px + var(--safe-t,0px));padding-bottom:6px;}
 #phase-label{font-size:10px;color:#7c9cca;font-weight:700;letter-spacing:1px;text-align:center;margin-bottom:5px;text-transform:uppercase;}
 #room-badge{font-size:9px;color:#4a2d8a;text-align:center;margin-bottom:2px;letter-spacing:1px;}
@@ -91,7 +92,9 @@ html,body{width:100%;height:100dvh;overflow:hidden;background:var(--bg);color:#e
 /* ─ MODAL ─ */
 #modal-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.88);z-index:500;align-items:flex-end;justify-content:center;padding-bottom:calc(var(--safe-b)+6px);}
 #modal-overlay.show{display:flex;}
+#modal-overlay.top-modal{align-items:flex-start;padding-bottom:0;padding-top:calc(var(--safe-t,0px)+6px);}
 #modal-box{background:#151d35;border:2px solid #4a2d8a;border-radius:18px 18px 12px 12px;padding:16px 14px 12px;width:min(100vw - 12px,420px);max-height:72dvh;overflow-y:auto;-webkit-overflow-scrolling:touch;}
+#modal-overlay.top-modal #modal-box{border-radius:12px 12px 18px 18px;}
 #modal-title{font-family:'Fredoka One',cursive;font-size:16px;color:#a5b4fc;text-align:center;margin-bottom:6px;}
 #modal-subtitle{font-size:11px;color:#7c8faa;text-align:center;margin-bottom:8px;}
 #modal-list{display:flex;flex-direction:column;gap:5px;margin-bottom:10px;}
@@ -153,34 +156,34 @@ window._fbResolve({ db, ref, set, get, onValue, update, remove });
 <body>
 
 <div id="game">
-  <!-- P2エリア: ローカルは180度回転(local-mode), オンラインは正立 -->
+  <!-- P2エリア:
+       オンライン正立: 手札(上) → マナ → シールド → フィールド(下)
+       ローカルlocal-mode(180度回転): フィールド(上) → シールド → マナ → 手札(下) -->
   <div id="p2-area" class="pa">
-    <!-- オンライン正立時: フィールドが上、手札が下（P1と同じ構造） -->
-    <!-- ローカルlocal-mode時: 全体180度回転なので見た目は逆 -->
+    <div class="hand-area" id="p2-hand-area">
+      <div class="stat-bar">
+        <div class="tdot off" id="p2-dot"></div><b>P2</b>
+        <span class="sbadge" id="p2-hc">手札0</span>
+        <span class="sbadge" id="p2-mc">マナ0/0</span>
+        <span class="sbadge" id="p2-sc">🛡5</span>
+      </div>
+      <div class="hand-scroll" id="p2-hand"></div>
+    </div>
     <div class="ca">
+      <div class="brow">
+        <span class="zlbl" style="writing-mode:vertical-rl">マナ</span>
+        <div class="mana-zone" id="p2-mana"></div>
+      </div>
+      <div class="brow" style="gap:10px;padding-left:2px">
+        <div><div class="zlbl" style="text-align:left;margin-bottom:2px">シールド</div><div class="shields-row" id="p2-shields"></div></div>
+        <div class="sidecol"><div class="zlbl">デッキ</div><div class="pile deck-pile" id="p2-deck-pile"><span id="p2-dc">0</span></div></div>
+      </div>
       <div class="brow fr">
         <div style="flex:1;display:flex;flex-direction:column;min-height:0">
           <div class="zlbl" style="text-align:left;margin-bottom:2px">フィールド</div>
           <div class="field-zone" id="p2-field"></div>
         </div>
         <div class="sidecol"><div class="zlbl">墓地</div><div class="pile grave-pile" id="p2-grave" onclick="showGrave(2)"><span id="p2-gc">0</span></div></div>
-      </div>
-      <div class="brow" style="gap:10px;padding-left:2px">
-        <div><div class="zlbl" style="text-align:left;margin-bottom:2px">シールド</div><div class="shields-row" id="p2-shields"></div></div>
-        <div class="sidecol"><div class="zlbl">デッキ</div><div class="pile deck-pile" id="p2-deck-pile"><span id="p2-dc">0</span></div></div>
-      </div>
-      <div class="brow">
-        <span class="zlbl" style="writing-mode:vertical-rl">マナ</span>
-        <div class="mana-zone" id="p2-mana"></div>
-      </div>
-    </div>
-    <div class="hand-area">
-      <div class="hand-scroll" id="p2-hand"></div>
-      <div class="stat-bar" style="margin-top:2px">
-        <div class="tdot off" id="p2-dot"></div><b>P2</b>
-        <span class="sbadge" id="p2-hc">手札0</span>
-        <span class="sbadge" id="p2-mc">マナ0/0</span>
-        <span class="sbadge" id="p2-sc">🛡5</span>
       </div>
     </div>
   </div>
@@ -494,19 +497,16 @@ function phaseUntap(){
   const pl=G.players[G.turn];
   pl.field.forEach(c=>{c.tapped=false;c.summonedThisTurn=false;});
   pl.mana.forEach(c=>c.tapped=false);
-  // バー: オンラインは常に下。ローカルはP2ターンのみ上
+  // バー位置 + P2エリア回転
   const bar=document.getElementById('action-bar');
-  if(bar){
-    if(ONLINE.enabled){
-      bar.classList.remove('top-mode'); // オンラインは常に下
-    }else{
-      bar.classList.toggle('top-mode', G.turn===2);
-    }
-  }
-  // P2エリア: ローカルは180度回転、オンラインは正立
   const p2area=document.getElementById('p2-area');
-  if(p2area){
-    p2area.classList.toggle('local-mode', !ONLINE.enabled);
+  if(ONLINE.enabled){
+    const myP=parseInt(ONLINE.myPlayer)||1;
+    if(bar) bar.classList.toggle('top-mode', myP===2);
+    if(p2area) p2area.classList.remove('local-mode'); // オンラインは回転なし
+  }else{
+    if(bar) bar.classList.toggle('top-mode', G.turn===2);
+    if(p2area) p2area.classList.add('local-mode'); // ローカルは180度回転
   }
   renderAll();
   adjustLayout();
@@ -684,11 +684,13 @@ function execShieldAttack(atk,p){
   const opp=p===1?2:1;
   const blockers=G.players[opp].field.filter(c=>(c.num===1||c.num===3)&&!c.tapped&&(!c.linkedWith||c.linkRoot));
   if(blockers.length){
-    // 防御側にブロックするか選択させる
-    showSimpleModal('ブロッカーでブロックしますか？',[
-      {label:'ブロックする',cls:'b',fn:()=>{closeModal();showBlockPicker(atk,p,blockers);}},
-      {label:'ブロックしない',cls:'r',fn:()=>{closeModal();doShieldBreak(atk,p);}},
-    ],`P${opp}のブロッカー: ${blockers.map(c=>CJ[c.color]+c.num).join(' / ')}`);
+    // 防御側(opp)向けにモーダルを表示
+    const savedTurn=G.turn;
+    G.turn=opp; // モーダル方向を防御側に向ける
+    showSimpleModal(`P${opp}: ブロックしますか？`,[
+      {label:'ブロックする',cls:'g',fn:()=>{G.turn=savedTurn;closeModal();showBlockPicker(atk,p,blockers);}},
+      {label:'ブロックしない',cls:'r',fn:()=>{G.turn=savedTurn;closeModal();doShieldBreak(atk,p);}},
+    ],`ブロッカー: ${blockers.map(c=>CJ[c.color]+c.num).join(' / ')}`);
   }else{
     doShieldBreak(atk,p);
   }
@@ -696,13 +698,15 @@ function execShieldAttack(atk,p){
 
 function showBlockPicker(atk,p,blockers){
   const opp=p===1?2:1;
-  showCardPicker('ブロッカーを選択','選択して決定を押す',blockers,opp,false,
+  const savedTurn=G.turn;
+  G.turn=opp; // 防御側向けにモーダル表示
+  showCardPicker(`P${opp}: ブロッカーを選択`,'選択して決定を押す',blockers,opp,false,
     (blocker)=>{
-      closeModal();
+      G.turn=savedTurn;closeModal();
       fxBlock(atk,p,blocker,opp);
       setTimeout(()=>{execCreatureAttack(atk,blocker,p);},600);
     },
-    [{label:'キャンセル（ブロックしない）',cls:'n',fn:()=>{closeModal();doShieldBreak(atk,p);}}]
+    [{label:'ブロックしない',cls:'r',fn:()=>{G.turn=savedTurn;closeModal();doShieldBreak(atk,p);}}]
   );
 }
 
@@ -1191,10 +1195,16 @@ function doLink(a,b,p){
 function breakShield(targetP,sc){
   if(sc.num===6||sc.num===8){
     G.pendingST.push({player:targetP,card:sc});
+    // ST確認は processST が防御側向けに表示
     processST();
   }else{
+    // STなしでも毎回防御側に確認させる（STがバレないように）
     G.players[targetP].hand.push(sc);
-    toast(`P${targetP}: シールド→手札に加えた`);
+    const origTurn=G.turn;
+    G.turn=targetP;
+    showSimpleModal(`P${targetP}: シールド確認`,[
+      {label:'OK',cls:'g',fn:()=>{G.turn=origTurn;closeModal();}},
+    ],`シールドが手札に加わりました`);
   }
 }
 function checkDirect(targetP,attP){
@@ -1206,10 +1216,23 @@ function checkDirect(targetP,attP){
 function processST(){
   if(!G.pendingST.length)return;
   const st=G.pendingST[0];
-  showSimpleModal(`シールドトリガー！ ${CJ[st.card.color]}${st.card.num}`,[
-    {label:'発動する！',cls:'g',fn:()=>{closeModal();activateST(st);G.pendingST.shift();if(G.pendingST.length)setTimeout(processST,300);}},
-    {label:'手札へ',cls:'n',fn:()=>{closeModal();G.players[st.player].hand.push(st.card);G.pendingST.shift();if(G.pendingST.length)setTimeout(processST,300);renderAll();}},
-  ],`P${st.player}のシールドトリガー！`);
+  // ST選択は防御側(st.player)向けにモーダルを表示
+  const savedTurn=G.turn;
+  G.turn=st.player;
+  showSimpleModal(`P${st.player}: シールドトリガー！`,[
+    {label:'発動する！',cls:'g',fn:()=>{
+      G.turn=savedTurn;closeModal();
+      activateST(st);G.pendingST.shift();
+      if(G.pendingST.length)setTimeout(processST,300);
+    }},
+    {label:'手札へ',cls:'n',fn:()=>{
+      G.turn=savedTurn;closeModal();
+      G.players[st.player].hand.push(st.card);
+      G.pendingST.shift();
+      if(G.pendingST.length)setTimeout(processST,300);
+      renderAll();
+    }},
+  ],'シールドトリガーを持っています'); // カード内容は表示しない
 }
 function activateST(st){
   const pl=G.players[st.player];
@@ -1618,7 +1641,9 @@ function showCardPicker(title,subtitle,cards,owner,isMana,onSelect,extraBtns=[])
     extraBtns.forEach(b=>{const el=document.createElement('button');el.className='btn '+b.cls;el.textContent=b.label;el.onclick=b.fn;btnsEl.appendChild(el);});
   }
   renderRows();renderBtns();
-  document.getElementById('modal-overlay').classList.add('show');
+  const ov=document.getElementById('modal-overlay');
+  ov.classList.add('show');
+  applyModalDir();
 }
 
 function showSimpleModal(title,btns,subtitle=''){
@@ -1638,10 +1663,25 @@ function showCustomModal(title,subtitle,bodyFn,btns){
   bodyFn();
   const el=document.getElementById('modal-btns');el.innerHTML='';
   btns.forEach(b=>{const btn=document.createElement('button');btn.className='btn '+b.cls;btn.textContent=b.label;btn.onclick=b.fn;el.appendChild(btn);});
-  document.getElementById('modal-overlay').classList.add('show');
+  const ov2=document.getElementById('modal-overlay');
+  ov2.classList.add('show');
+  applyModalDir();
 }
 
-function closeModal(){document.getElementById('modal-overlay').classList.remove('show');}
+function closeModal(){
+  const ov=document.getElementById('modal-overlay');
+  ov.classList.remove('show');
+  ov.classList.remove('top-modal');
+}
+// モーダルを特定プレイヤー向けに表示（forPlayer=1or2、省略時は現在のターン）
+function applyModalDir(forPlayer){
+  const p=forPlayer||G.turn;
+  const ov=document.getElementById('modal-overlay');
+  // オンラインでP2のスマホ、またはローカルでP2ターン → 上から
+  const isTop=(ONLINE.enabled && parseInt(ONLINE.myPlayer)===2)
+             ||(!ONLINE.enabled && p===2);
+  ov.classList.toggle('top-modal', isTop);
+}
 
 // ═══════════════════════════════════
 //  アクションバー
@@ -1694,22 +1734,26 @@ function adjustLayout(){
     const h=bar.offsetHeight;
     document.documentElement.style.setProperty('--bar-h',h+'px');
     const ha1=document.querySelector('#p1-area .hand-area');
-    const ha2=document.querySelector('#p2-area .hand-area');
+    const ha2=document.getElementById('p2-hand-area');
+    // 初期化
+    if(ha1){ha1.style.paddingBottom='4px';}
+    if(ha2){ha2.style.paddingTop='4px';ha2.style.paddingBottom='4px';}
     if(ONLINE.enabled){
-      // オンライン: バーは常に下。P1・P2どちらもP1エリア下に余白
-      bar.classList.remove('top-mode');
-      if(ha1)ha1.style.paddingBottom=(h+4)+'px';
-      if(ha2)ha2.style.paddingBottom='4px';
+      if(parseInt(ONLINE.myPlayer)===2){
+        bar.classList.add('top-mode');
+        if(ha2)ha2.style.paddingTop=(h+4)+'px'; // バーが上なのでP2手札の上に余白
+      }else{
+        bar.classList.remove('top-mode');
+        if(ha1)ha1.style.paddingBottom=(h+4)+'px'; // バーが下なのでP1手札の下に余白
+      }
     }else{
-      // ローカル: P2ターンはバーを上に
+      // ローカル: ターンに応じてバー切り替え
       if(G.turn===2){
         bar.classList.add('top-mode');
-        if(ha2)ha2.style.paddingBottom=(h+4)+'px';
-        if(ha1)ha1.style.paddingBottom='4px';
+        if(ha2)ha2.style.paddingBottom=(h+4)+'px'; // P2エリアは180度回転済みなのでpaddingBottomが上になる
       }else{
         bar.classList.remove('top-mode');
         if(ha1)ha1.style.paddingBottom=(h+4)+'px';
-        if(ha2)ha2.style.paddingBottom='4px';
       }
     }
   });
