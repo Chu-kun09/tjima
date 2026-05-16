@@ -409,18 +409,15 @@ function subscribeRoom(roomId) {
 
     const currentTurn = parseInt(G.turn);
 
+    // オンラインフェーズ処理
+    if(G.onlinePhase){
+      handleOnlinePhase(G.onlinePhase, myP);
+      return;
+    }
     if (currentTurn === myP) {
-      // 自分のターンになった → アンタップ開始
       setTimeout(() => phaseUntap(), 300);
     } else {
-      // 相手が防御確認OKした → 攻撃フェーズ継続
-      if(G._shieldConfirmed && G.phase === 'attack'){
-        G._shieldConfirmed = false;
-        setTimeout(phaseAttack, 300);
-      }else{
-        // 相手のターン → 待機表示
-        setBar(`P${currentTurn}のターン — 相手の番です`, []);
-      }
+      setBar(`P${currentTurn}のターン — 相手の番です`, []);
     }
   });
   ONLINE.unsubscribe = () => unsub();
@@ -717,15 +714,27 @@ function execDirectWithBlock(atk,p,blockers){
 // シールド攻撃（ブロッカー選択は防御側）
 function execShieldAttack(atk,p){
   const opp=p===1?2:1;
-  const blockers=G.players[opp].field.filter(c=>(c.num===1||c.num===3)&&!c.tapped&&(!c.linkedWith||c.linkRoot));
-  if(blockers.length){
-    // 防御側(opp)に対してブロック確認モーダルを表示
-    showSimpleModal(`ブロックしますか？`,[
-      {label:'ブロックする',cls:'g',fn:()=>{closeModal();showBlockPicker(atk,p,blockers);}},
-      {label:'ブロックしない',cls:'r',fn:()=>{closeModal();doShieldBreak(atk,p);}},
-    ],`ブロッカー: ${blockers.map(c=>CJ[c.color]+c.num).join(' / ')}`,opp);
+  if(ONLINE.enabled){
+    // オンライン: _pendingAtkをセットしてpush → subscribeで防御側がブロック確認
+    G._pendingAtk={atkId:atk.id, attPlayer:p};
+    G.onlinePhase='block-query';
+    atk.tapped=true;
+    if(atk.linkedWith)atk.linkedWith.tapped=true;
+    G.atkCard=null;
+    pushState();
+    setBar('相手がブロックを検討中...',[]);
+    renderAll();
   }else{
-    doShieldBreak(atk,p);
+    // ローカル: 従来通り
+    const blockers=G.players[opp].field.filter(c=>(c.num===1||c.num===3)&&!c.tapped&&(!c.linkedWith||c.linkRoot));
+    if(blockers.length){
+      showSimpleModal(`ブロックしますか？`,[
+        {label:'ブロックする',cls:'g',fn:()=>{closeModal();showBlockPicker(atk,p,blockers);}},
+        {label:'ブロックしない',cls:'r',fn:()=>{closeModal();doShieldBreak(atk,p);}},
+      ],`ブロッカー: ${blockers.map(c=>CJ[c.color]+c.num).join(' / ')}`,opp);
+    }else{
+      doShieldBreak(atk,p);
+    }
   }
 }
 
@@ -1297,22 +1306,190 @@ function checkDirect(targetP,attP){
     setTimeout(phaseAttack,400);
   }
 }
+
+// ── オンラインフェーズハンドラ ──
+function handleOnlinePhase(phase, myP){
+  if(phase==='block-query'){
+    // 防御側: ブロック確認
+    const atk=G._pendingAtk;
+    const p=atk?atk.attPlayer:null;
+    const opp=p===1?2:1;
+    if(myP===opp){
+      // 自分が防御側 → ブロック確認モーダル
+      const atkCard=G.players[p]&&G.players[p].field.find(c=>c.id===atk.atkId);
+      const blockers=G.players[opp].field.filter(c=>(c.num===1||c.num===3)&&!c.tapped&&(!c.linkedWith||c.linkRoot));
+      if(blockers.length){
+        showSimpleModal('ブロックしますか？',[
+          {label:'ブロックする',cls:'g',fn:()=>{
+            closeModal();
+            // ブロッカー選択
+            showCardPicker('ブロッカーを選択','選択して決定',blockers,opp,false,
+              (blocker)=>{
+                closeModal();
+                // ブロック先をGに記録してpush
+                G.onlinePhase='block-resolve';
+                G._blockerId=blocker.id;
+                pushState();
+                renderAll();
+              },
+              [{label:'ブロックしない',cls:'r',fn:()=>{
+                closeModal();
+                G.onlinePhase='shield-break';
+                G._blockerId=null;
+                pushState();
+                renderAll();
+              }}],opp
+            );
+          }},
+          {label:'ブロックしない',cls:'r',fn:()=>{
+            closeModal();
+            G.onlinePhase='shield-break';
+            G._blockerId=null;
+            pushState();
+            renderAll();
+          }},
+        ],`ブロッカー: ${blockers.map(c=>CJ[c.color]+c.num).join(' / ')}`,opp);
+      }else{
+        // ブロッカーなし → 直接シールド破壊
+        G.onlinePhase='shield-break';
+        G._blockerId=null;
+        pushState();
+        renderAll();
+      }
+    }else{
+      // 攻撃側: 待機
+      setBar('相手がブロックを検討中...',[]);
+    }
+  }
+  else if(phase==='block-resolve'){
+    // 攻撃側: ブロック処理実行
+    const atk=G._pendingAtk;
+    const p=atk?atk.attPlayer:null;
+    const opp=p===1?2:1;
+    if(myP===p){
+      const atkCard=G.players[p].field.find(c=>c.id===atk.atkId);
+      const blocker=G._blockerId!=null?G.players[opp].field.find(c=>c.id===G._blockerId):null;
+      if(atkCard&&blocker){
+        G.onlinePhase=null;G._pendingAtk=null;G._blockerId=null;
+        execCreatureAttack(atkCard,blocker,p);
+      }
+    }else{
+      setBar('相手が処理中...',[]);
+    }
+  }
+  else if(phase==='shield-break'){
+    // 攻撃側: シールド実際に割る
+    const atk=G._pendingAtk;
+    const p=atk?atk.attPlayer:null;
+    const opp=p===1?2:1;
+    if(myP===p){
+      const atkCard=G.players[p].field.find(c=>c.id===atk.atkId);
+      if(atkCard){
+        G.onlinePhase='shield-confirm';
+        doShieldBreakOnline(atkCard,p);
+      }
+    }else{
+      setBar('シールドが割られました...',[]);
+    }
+  }
+  else if(phase==='shield-confirm'){
+    // 防御側: シールド確認
+    const atk=G._pendingAtk;
+    const p=atk?atk.attPlayer:null;
+    const opp=p===1?2:1;
+    if(myP===opp){
+      // STの処理
+      if(G.pendingST&&G.pendingST.length){
+        processST();
+      }else{
+        // 手札に加わったカードを確認してOK
+        showSimpleModal('シールド確認',[
+          {label:'OK',cls:'g',fn:()=>{
+            closeModal();
+            G.onlinePhase='attack-continue';
+            G._pendingAtk=null;
+            pushState();
+            renderAll();
+          }},
+        ],'シールドが手札に加わりました',opp);
+      }
+    }else{
+      setBar('相手がシールドを確認中...',[]);
+    }
+  }
+  else if(phase==='attack-continue'){
+    // 攻撃側: 攻撃継続
+    const p=G.turn; // ターンは変わっていない
+    if(myP===p){
+      G.onlinePhase=null;G._pendingAtk=null;
+      pushState();
+      setTimeout(phaseAttack,200);
+    }
+  }
+}
+
+// オンライン: シールドを実際に割ってGを更新してpush
+function doShieldBreakOnline(atk,p){
+  const opp=p===1?2:1;
+  const oppPl=G.players[opp];
+  const idx=oppPl.shields.findIndex(s=>s!==null);
+  if(idx===-1){
+    // シールドなし = ダイレクトアタック
+    G.onlinePhase=null;G._pendingAtk=null;
+    atk.tapped=true;
+    if(atk.linkedWith)atk.linkedWith.tapped=true;
+    pushState();
+    winGame(p,'ダイレクトアタック！');
+    return;
+  }
+  const sc=oppPl.shields[idx];
+  oppPl.shields[idx]=null;
+  atk.tapped=true;
+  if(atk.linkedWith)atk.linkedWith.tapped=true;
+  fxShieldBreak(opp, atk.num===0);
+
+  // STチェック
+  if(sc.num===6||sc.num===8){
+    G.pendingST=[{player:opp,card:sc}];
+  }else{
+    G.players[opp].hand.push(sc);
+  }
+  G.onlinePhase='shield-confirm';
+  pushState();
+  renderAll();
+}
 function processST(){
   if(!G.pendingST.length)return;
   const st=G.pendingST[0];
-  // 防御側(st.player)向けにモーダル表示
   showSimpleModal(`シールドトリガー！`,[
     {label:'発動する！',cls:'g',fn:()=>{
       closeModal();
       activateST(st);G.pendingST.shift();
-      if(G.pendingST.length)setTimeout(processST,300);
+      if(G.pendingST.length){
+        setTimeout(processST,300);
+      }else{
+        if(ONLINE.enabled){
+          G.onlinePhase='attack-continue';G._pendingAtk=null;
+          pushState();renderAll();
+        }else{
+          if(G.phase==='attack')setTimeout(phaseAttack,300);
+        }
+      }
     }},
     {label:'手札へ',cls:'n',fn:()=>{
       closeModal();
       G.players[st.player].hand.push(st.card);
       G.pendingST.shift();
-      if(G.pendingST.length){setTimeout(processST,300);}
-      else{renderAll();if(G.phase==='attack')setTimeout(phaseAttack,300);}
+      if(G.pendingST.length){
+        setTimeout(processST,300);
+      }else{
+        if(ONLINE.enabled){
+          G.onlinePhase='attack-continue';G._pendingAtk=null;
+          pushState();renderAll();
+        }else{
+          renderAll();if(G.phase==='attack')setTimeout(phaseAttack,300);
+        }
+      }
     }},
   ],`シールドトリガーを持っています（${CJ[st.card.color]}${st.card.num}）`,st.player);
 }
@@ -1603,11 +1780,11 @@ function cardHTML(card,zone,p){
   let click='';
   const isMyTurn=ONLINE.enabled?(G.turn===ONLINE.myPlayer):true;
   if(zone==='hand'&&p===G.turn&&isMyTurn){
-    if(G.phase==='charge')click=`onclick="selectHandForCharge(G.players[${p}].hand.find(c=>c.id===${card.id}))"`;
-    else if(G.phase==='summon')click=`onclick="selectHandForSummon(G.players[${p}].hand.find(c=>c.id===${card.id}))"`;
+    if(G.phase==='charge')click=`onclick="selectHandForCharge(G.players[${p}].hand.find(c=>c.id==${card.id}))"`;
+    else if(G.phase==='summon')click=`onclick="selectHandForSummon(G.players[${p}].hand.find(c=>c.id==${card.id}))"`;
   }
   if(zone==='field'&&p===G.turn&&G.phase==='attack'&&isMyTurn){
-    click=`onclick="selectFieldForAttack(G.players[${p}].field.find(c=>c.id===${card.id}),${p})"`;
+    click=`onclick="selectFieldForAttack(G.players[${p}].field.find(c=>c.id==${card.id}),${p})"`;
   }
   if(zone==='field'&&G._7selectMode&&G._7selectMode.active){
     click=`onclick="on7FieldTap(${card.id},${p})"`;
