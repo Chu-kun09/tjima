@@ -350,8 +350,6 @@ function deserializeG(snap) {
     selMana:     [],
     atkCard:     null,
     _7selectMode:null,
-    attackData:  raw.attackData || null,
-    brokenShields: toArr(raw.brokenShields),
     players: {
       1: makePlayer(p1raw),
       2: makePlayer(p2raw),
@@ -398,32 +396,6 @@ function subscribeRoom(roomId) {
     }
 
     deserializeG(data);
-    // subscribeRoom内に追加
-const unsub = onValue(stateRef, snapshot => {
-  // ... (既存の処理) ...
-  deserializeG(data);
-  renderAll();
-  adjustLayout();
-  
-  // ★追加：フェーズ監視による操作権のキャッチボール
-  const myPlayerNum = parseInt(ONLINE.myPlayer);
-  const turnPlayerNum = parseInt(G.turn);
-
-  // ①相手ターン中、ブロック待ちになったらブロック選択画面を出す
-  if (G.phase === 'wait_block' && myPlayerNum !== turnPlayerNum) {
-    showBlockSelectModal(G.attackData);
-  }
-  
-  // ②自分のターン中、相手のブロック処理が終わったらダメージ計算・ブレイクを実行
-  else if (G.phase === 'resolve_attack' && myPlayerNum === turnPlayerNum) {
-    executeAttackResolution();
-  }
-  
-  // ③相手ターン中、シールドが割られたらS・トリガー確認画面を出す
-  else if (G.phase === 'wait_shield' && myPlayerNum !== turnPlayerNum) {
-    showShieldTriggerModal();
-  }
-});
     renderAll();
     adjustLayout();
 
@@ -706,21 +678,6 @@ function doAttackSelected(){
   if(!G.selCard)return;
   G.atkCard=G.selCard;G.selCard=null;
   showTargetModal(G.atkCard,G.turn);
-}
-function doAttack(attackerCard, targetCardOrPlayer) {
-  // 攻撃情報をGに保存
-  G.attackData = {
-    attackerId: attackerCard.id,
-    targetId: targetCardOrPlayer === 'player' ? 'player' : targetCardOrPlayer.id,
-    blockerId: null
-  };
-  
-  // 相手のブロックを待つフェーズへ移行
-  G.phase = 'wait_block';
-  
-  toast('相手のブロック選択を待っています...');
-  pushState(); // ★ここでFirebaseに送信し、相手の画面を更新
-  renderAll();
 }
 function showTargetModal(atk,p){
   const opp=p===1?2:1;
@@ -2029,120 +1986,6 @@ async function joinRoom(roomId){
   closeModal();
   toast('参加しました！ゲーム開始まで少々お待ちください...');
   subscribeRoom(roomId);
-}
-
-  // ①【防御側】ブロック選択モーダル
-function showBlockSelectModal(attackData) {
-  // ※実際はここで自分のフィールドのブロッカー持ちをリストアップするUIを構築します
-  document.getElementById('modal-title').textContent = "相手の攻撃！ブロックしますか？";
-  
-  const modalBtns = document.getElementById('modal-btns');
-  modalBtns.innerHTML = '';
-
-  // 「ブロックしない」ボタン
-  const noBlockBtn = document.createElement('button');
-  noBlockBtn.className = 'btn n';
-  noBlockBtn.textContent = 'ブロックしない';
-  noBlockBtn.onclick = () => {
-    closeModal();
-    G.attackData.blockerId = null;
-    G.phase = 'resolve_attack'; // 攻撃側に手番を戻す
-    pushState();
-  };
-  modalBtns.appendChild(noBlockBtn);
-
-  // ※ここにブロッカークリーチャーを選択するボタンを動的に追加する処理を入れます
-  
-  document.getElementById('modal-overlay').classList.add('show');
-}
-
-// ②【攻撃側】攻撃結果の反映・シールドブレイク処理
-function executeAttackResolution() {
-  const atk = G.attackData;
-  
-  if (atk.blockerId) {
-    // ブロックされた場合のバトル処理
-    // ... バトルして破壊等の処理 ...
-    G.phase = 'main'; // 終わったらメインフェーズに戻る
-    pushState();
-  } else {
-    if (atk.targetId === 'player') {
-      // プレイヤーへの直接攻撃（シールドブレイク）
-      const opponentId = G.turn === 1 ? 2 : 1;
-      const oppShields = G.players[opponentId].shields;
-      
-      if (oppShields.length > 0) {
-        // シールドを1枚割る
-        const brokenCard = oppShields.pop();
-        G.brokenShields = [brokenCard];
-        G.phase = 'wait_shield'; // 相手のトリガー確認待ちへ
-        pushState();
-      } else {
-        // シールド0枚ならダイレクトアタック成功・勝利処理
-        G.gameOver = true;
-        G._winner = G.turn;
-        pushState();
-      }
-    } else {
-      // クリーチャーへの攻撃処理
-      // ... バトル処理 ...
-      G.phase = 'main';
-      pushState();
-    }
-  }
-}
-
-// ③【防御側】シールド・トリガーの確認モーダル
-function showShieldTriggerModal() {
-  const brokenCard = G.brokenShields[0];
-  if (!brokenCard) return;
-
-  document.getElementById('modal-title').textContent = "シールドブレイク！";
-  document.getElementById('modal-subtitle').textContent = `[コスト:${brokenCard.cost}] ${brokenCard.name || 'カード'}`;
-  
-  const modalBtns = document.getElementById('modal-btns');
-  modalBtns.innerHTML = '';
-
-  // S・トリガーがあるかどうかの判定（ここでは例として isTrigger プロパティを使用）
-  if (brokenCard.isTrigger) {
-    const triggerBtn = document.createElement('button');
-    triggerBtn.className = 'btn p';
-    triggerBtn.textContent = 'S・トリガー発動！';
-    triggerBtn.onclick = () => {
-      closeModal();
-      // トリガー効果の処理をここに書く
-      resolveShield(true);
-    };
-    modalBtns.appendChild(triggerBtn);
-  }
-
-  // 手札に加えるボタン
-  const okBtn = document.createElement('button');
-  okBtn.className = 'btn g';
-  okBtn.textContent = 'OK (手札に加える)';
-  okBtn.onclick = () => {
-    closeModal();
-    resolveShield(false);
-  };
-  modalBtns.appendChild(okBtn);
-
-  document.getElementById('modal-overlay').classList.add('show');
-}
-
-// ④【防御側】シールド確認後の手番返却
-function resolveShield(useTrigger) {
-  const card = G.brokenShields.pop(); // 一時領域から取り出す
-  const myId = ONLINE.myPlayer;
-
-  if (!useTrigger) {
-    // 手札に加える
-    G.players[myId].hand.push(card);
-  }
-
-  // 攻撃側のメインフェーズに戻す
-  G.phase = 'main';
-  pushState();
-  renderAll();
 }
 
 // ─ endTurnでpushState ─
