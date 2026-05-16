@@ -17,7 +17,7 @@ html,body{width:100%;height:100dvh;overflow:hidden;background:var(--bg);color:#e
 /* ─ LAYOUT ─ */
 #game{display:flex;flex-direction:column;width:100%;height:100dvh;}
 .pa{flex:1;display:flex;flex-direction:column;min-height:0;overflow:hidden;}
-#p2-area.local-mode { transform: rotate(180deg); }
+/* P2は常に正立 - local-modeによる回転廃止 */
 #divider{height:3px;flex-shrink:0;background:linear-gradient(90deg,transparent,#4a2d8a,transparent);}
 
 /* ─ HAND ─ */
@@ -514,7 +514,7 @@ function phaseUntap(){
     if(p2area) p2area.classList.remove('local-mode'); // オンラインは回転なし
   }else{
     if(bar) bar.classList.toggle('top-mode', G.turn===2);
-    if(p2area) p2area.classList.add('local-mode'); // ローカルは180度回転
+    // P2は常に正立（local-mode廃止）
   }
   renderAll();
   adjustLayout();
@@ -674,17 +674,36 @@ function doAttackSelected(){
 function showTargetModal(atk,p){
   const opp=p===1?2:1;
   const shields=G.players[opp].shields.filter(Boolean);
-  const tapped=G.players[opp].field.filter(c=>c.tapped);
-  // ブロッカーは攻撃対象にならない（防御側が選択）
+  const tapped=G.players[opp].field.filter(c=>c.tapped&&(!c.linkedWith||c.linkRoot));
+  const untappedBlockers=G.players[opp].field.filter(c=>(c.num===1||c.num===3)&&!c.tapped&&(!c.linkedWith||c.linkRoot));
   const btns=[];
-  if(shields.length)btns.push({label:'シールドを攻撃',cls:'r',fn:()=>{closeModal();execShieldAttack(atk,p);}});
-  if(tapped.length)btns.push({label:'ナンバーズを攻撃',cls:'o',fn:()=>{closeModal();showCreaturePicker(atk,p);}});
-  if(shields.length===0&&!tapped.length)btns.push({label:'ダイレクトアタック',cls:'r',fn:()=>{closeModal();execDirectAttack(atk,p);}});
+  if(shields.length){
+    btns.push({label:'シールドを攻撃',cls:'r',fn:()=>{closeModal();execShieldAttack(atk,p);}});
+  }
+  if(tapped.length){
+    btns.push({label:'ナンバーズを攻撃',cls:'o',fn:()=>{closeModal();showCreaturePicker(atk,p);}});
+  }
+  // シールド0枚 → ダイレクトアタック可（ブロッカーがいればブロックされる）
+  if(shields.length===0){
+    btns.push({label:'ダイレクトアタック',cls:'r',fn:()=>{closeModal();execDirectWithBlock(atk,p,untappedBlockers);}});
+  }
   if(atk.num===2)btns.push({label:'ヒラボン（手札捨て→破壊→攻撃）',cls:'y',fn:()=>{closeModal();showHirabonAttackDiscard(p);}});
   btns.push({label:'キャンセル',cls:'n',fn:()=>{closeModal();G.atkCard=null;phaseAttack();}});
-  const atkPow=getAtkPower(atk);
   const breaker=(atk.num===0)?'トリプル':(atk.num===7||atk.num===9)?'ダブル':'';
-  showSimpleModal(`${CJ[atk.color]}${atk.num}（ATK:${atkPow}${breaker?'・'+breaker:''}）で攻撃`,btns,'攻撃対象を選択');
+  showSimpleModal(`${CJ[atk.color]}${atk.num}${breaker?'（'+breaker+'）':''}で攻撃`,btns,'攻撃対象を選択');
+}
+
+// シールド0枚でのダイレクトアタック（ブロッカーがいれば防御側がブロック選択）
+function execDirectWithBlock(atk,p,blockers){
+  if(blockers.length){
+    const opp=p===1?2:1;
+    showSimpleModal('ブロックしますか？',[
+      {label:'ブロックする',cls:'g',fn:()=>{closeModal();showBlockPicker(atk,p,blockers);}},
+      {label:'ブロックしない → ダイレクト',cls:'r',fn:()=>{closeModal();execDirectAttack(atk,p);}},
+    ],`ブロッカー: ${blockers.map(c=>CJ[c.color]+c.num).join(' / ')}`,opp);
+  }else{
+    execDirectAttack(atk,p);
+  }
 }
 
 // シールド攻撃（ブロッカー選択は防御側）
@@ -822,6 +841,8 @@ function execCreatureAttack(atk,target,p){
     }
   }
   renderAll();
+  // 攻撃後に攻撃フェーズを継続（さらに攻撃できる）
+  setTimeout(()=>{if(G.phase==='attack')phaseAttack();},300);
 }
 
 // リンクペアが破壊されたとき、持ち主がどちらを墓地に送るか選択
@@ -1202,14 +1223,17 @@ function breakShield(targetP,sc){
     G.players[targetP].hand.push(sc);
     toast(`P${attP}: シールドを破壊！ 相手が確認中...`);
     showSimpleModal(`シールド確認`,[
-      {label:'OK',cls:'g',fn:()=>closeModal()},
+      {label:'OK',cls:'g',fn:()=>{closeModal();if(G.phase==='attack')setTimeout(phaseAttack,200);}},
     ],`シールドが手札に加わりました`,targetP);
   }
 }
 function checkDirect(targetP,attP){
   if(G.players[targetP].shields.filter(Boolean).length===0){
     toast(`🔥 P${targetP}のシールドが全部割れた！`);
-    // ダイレクトアタックは次の攻撃時 (シールドが0枚の状態で攻撃→execDirectAttack)
+  }
+  // STや確認モーダルがなければ攻撃フェーズ継続
+  if(!G.pendingST.length&&G.phase==='attack'){
+    setTimeout(phaseAttack,400);
   }
 }
 function processST(){
@@ -1226,8 +1250,8 @@ function processST(){
       closeModal();
       G.players[st.player].hand.push(st.card);
       G.pendingST.shift();
-      if(G.pendingST.length)setTimeout(processST,300);
-      renderAll();
+      if(G.pendingST.length){setTimeout(processST,300);}
+      else{renderAll();if(G.phase==='attack')setTimeout(phaseAttack,300);}
     }},
   ],`シールドトリガーを持っています（${CJ[st.card.color]}${st.card.num}）`,st.player);
 }
@@ -1287,11 +1311,16 @@ function canAttack(p,card){
   if(card.linkedWith&&!card.linkRoot)return false;
   return!card.tapped&&(!card.summonedThisTurn||card.speedAttacker);
 }
-// リンクペアの攻撃力を返す
+// カードの攻撃力を返す（表示には使わず処理のみ）
 function getAtkPower(card){
   if(card.linkedWith&&card.linkRoot){
-    if(card.num===3||card.num===4)return 3.5; // 3+4リンク
-    if(card.num===5)return 5;                  // 5+5リンク
+    if(card.num===3||card.num===4)return 3.5;
+    if(card.num===5)return 5;
+  }
+  // 0の攻撃力: 青=11, 緑=12, 黄=13, 赤=14
+  if(card.num===0){
+    const pow0={blue:11,green:12,yellow:13,red:14};
+    return pow0[card.color]||11;
   }
   return card.num;
 }
@@ -1665,7 +1694,7 @@ function showSimpleModal(title,btns,subtitle='',forPlayer=null){
 }
 
 // カスタムモーダル（ボディ関数でリストを直接操作）
-function showCustomModal(title,subtitle,bodyFn,btns){
+function showCustomModal(title,subtitle,bodyFn,btns,forPlayer=null){
   document.getElementById('modal-title').textContent=title;
   document.getElementById('modal-subtitle').textContent=subtitle;
   document.getElementById('modal-list').innerHTML='';
@@ -1674,7 +1703,7 @@ function showCustomModal(title,subtitle,bodyFn,btns){
   btns.forEach(b=>{const btn=document.createElement('button');btn.className='btn '+b.cls;btn.textContent=b.label;btn.onclick=b.fn;el.appendChild(btn);});
   const ov2=document.getElementById('modal-overlay');
   ov2.classList.add('show');
-  applyModalDir();
+  applyModalDir(forPlayer||G.turn);
 }
 
 function closeModal(){
@@ -1688,13 +1717,8 @@ function closeModal(){
 // ローカル: for===2のとき上から
 function applyModalDir(forPlayer){
   const ov=document.getElementById('modal-overlay');
-  const p=forPlayer||G.turn;
-  let isTop=false;
-  if(ONLINE.enabled){
-    isTop=(parseInt(ONLINE.myPlayer)===2);
-  }else{
-    isTop=(p===2);
-  }
+  // オンラインでP2のスマホのみ上から。ローカルは常に下。
+  const isTop=ONLINE.enabled&&parseInt(ONLINE.myPlayer)===2;
   ov.classList.toggle('top-modal',isTop);
 }
 
@@ -1762,14 +1786,10 @@ function adjustLayout(){
         if(ha1)ha1.style.paddingBottom=(h+4)+'px'; // バーが下なのでP1手札の下に余白
       }
     }else{
-      // ローカル: ターンに応じてバー切り替え
-      if(G.turn===2){
-        bar.classList.add('top-mode');
-        if(ha2)ha2.style.paddingBottom=(h+4)+'px'; // P2エリアは180度回転済みなのでpaddingBottomが上になる
-      }else{
-        bar.classList.remove('top-mode');
-        if(ha1)ha1.style.paddingBottom=(h+4)+'px';
-      }
+      // ローカル: 常にバーは下。現在ターンのプレイヤーの手札下に余白
+      bar.classList.remove('top-mode');
+      if(ha1)ha1.style.paddingBottom=(h+4)+'px';
+      if(ha2)ha2.style.paddingBottom=(h+4)+'px';
     }
   });
 }
