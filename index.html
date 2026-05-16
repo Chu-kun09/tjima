@@ -246,6 +246,14 @@ window._fbResolve({ db, ref, set, get, onValue, update, remove });
   <button class="btn p" style="font-size:17px;padding:12px 36px;margin-top:10px" onclick="retryGame()">もう一度</button>
 </div>
 
+<!-- フリーズ対策: 小さいリセットボタン -->
+<button id="reset-btn" onclick="emergencyReset()"
+  style="position:fixed;top:4px;right:4px;z-index:9999;
+  background:rgba(80,80,80,0.6);color:#aaa;border:none;
+  border-radius:6px;font-size:10px;padding:3px 7px;cursor:pointer;">
+  ↺
+</button>
+
 <script>
 'use strict';
 
@@ -684,13 +692,11 @@ function execShieldAttack(atk,p){
   const opp=p===1?2:1;
   const blockers=G.players[opp].field.filter(c=>(c.num===1||c.num===3)&&!c.tapped&&(!c.linkedWith||c.linkRoot));
   if(blockers.length){
-    // 防御側(opp)向けにモーダルを表示
-    const savedTurn=G.turn;
-    G.turn=opp; // モーダル方向を防御側に向ける
-    showSimpleModal(`P${opp}: ブロックしますか？`,[
-      {label:'ブロックする',cls:'g',fn:()=>{G.turn=savedTurn;closeModal();showBlockPicker(atk,p,blockers);}},
-      {label:'ブロックしない',cls:'r',fn:()=>{G.turn=savedTurn;closeModal();doShieldBreak(atk,p);}},
-    ],`ブロッカー: ${blockers.map(c=>CJ[c.color]+c.num).join(' / ')}`);
+    // 防御側(opp)に対してブロック確認モーダルを表示
+    showSimpleModal(`ブロックしますか？`,[
+      {label:'ブロックする',cls:'g',fn:()=>{closeModal();showBlockPicker(atk,p,blockers);}},
+      {label:'ブロックしない',cls:'r',fn:()=>{closeModal();doShieldBreak(atk,p);}},
+    ],`ブロッカー: ${blockers.map(c=>CJ[c.color]+c.num).join(' / ')}`,opp);
   }else{
     doShieldBreak(atk,p);
   }
@@ -698,15 +704,14 @@ function execShieldAttack(atk,p){
 
 function showBlockPicker(atk,p,blockers){
   const opp=p===1?2:1;
-  const savedTurn=G.turn;
-  G.turn=opp; // 防御側向けにモーダル表示
-  showCardPicker(`P${opp}: ブロッカーを選択`,'選択して決定を押す',blockers,opp,false,
+  showCardPicker(`ブロッカーを選択`,'選択して決定を押す',blockers,opp,false,
     (blocker)=>{
-      G.turn=savedTurn;closeModal();
+      closeModal();
       fxBlock(atk,p,blocker,opp);
       setTimeout(()=>{execCreatureAttack(atk,blocker,p);},600);
     },
-    [{label:'ブロックしない',cls:'r',fn:()=>{G.turn=savedTurn;closeModal();doShieldBreak(atk,p);}}]
+    [{label:'ブロックしない',cls:'r',fn:()=>{closeModal();doShieldBreak(atk,p);}}],
+    opp  // forPlayer = 防御側
   );
 }
 
@@ -1067,25 +1072,17 @@ function on7FieldTap(cardId,cardOwner){
 function show7DestModal(p,card,origOwner,origZone){
   const isFaceDown=!!card._faceDown;
   const label=isFaceDown?'（裏向き）':`${CJ[card.color]}${card.num}`;
-  showSimpleModal(`${label} の移動先`,[
-    {label:'P1 手札',cls:'b',fn:()=>{closeModal();exec7Move(p,card,origOwner,'hand',1);}},
-    {label:'P2 手札',cls:'b',fn:()=>{closeModal();exec7Move(p,card,origOwner,'hand',2);}},
-    {label:'P1 マナ',cls:'g',fn:()=>{closeModal();exec7Move(p,card,origOwner,'mana',1);}},
-    {label:'P2 マナ',cls:'g',fn:()=>{closeModal();exec7Move(p,card,origOwner,'mana',2);}},
-    {label:'P1 フィールド',cls:'o',fn:()=>{closeModal();exec7Move(p,card,origOwner,'field',1);}},
-    {label:'P2 フィールド',cls:'o',fn:()=>{closeModal();exec7Move(p,card,origOwner,'field',2);}},
-    {label:'P1 シールド（裏）',cls:'p',fn:()=>{closeModal();exec7Move(p,card,origOwner,'shield',1);}},
-    {label:'P2 シールド（裏）',cls:'p',fn:()=>{closeModal();exec7Move(p,card,origOwner,'shield',2);}},
-    {label:'P1 デッキ上（裏）',cls:'p',fn:()=>{closeModal();exec7Move(p,card,origOwner,'deck',1);}},
-    {label:'P2 デッキ上（裏）',cls:'p',fn:()=>{closeModal();exec7Move(p,card,origOwner,'deck',2);}},
+  // 移動先は自分(p)のゾーンのみ
+  const btns=[
+    {label:'自分の手札',cls:'b',fn:()=>{closeModal();exec7Move(p,card,origOwner,'hand',p);}},
+    {label:'自分のマナ',cls:'g',fn:()=>{closeModal();exec7Move(p,card,origOwner,'mana',p);}},
+    {label:'自分のフィールド',cls:'o',fn:()=>{closeModal();exec7Move(p,card,origOwner,'field',p);}},
+    {label:'自分のシールド（裏）',cls:'p',fn:()=>{closeModal();exec7Move(p,card,origOwner,'shield',p);}},
+    {label:'自分のデッキ上（裏）',cls:'p',fn:()=>{closeModal();exec7Move(p,card,origOwner,'deck',p);}},
     {label:'墓地',cls:'r',fn:()=>{closeModal();exec7Move(p,card,origOwner,'grave',origOwner);}},
-    {label:'キャンセル',cls:'n',fn:()=>{
-      // 取り出したカードを元の場所に戻す
-      closeModal();
-      restoreCard(card,origOwner,origZone);
-      show7PickModal(p);
-    }},
-  ],'移動先を選択');
+    {label:'キャンセル',cls:'n',fn:()=>{closeModal();restoreCard(card,origOwner,origZone);show7PickModal(p);}},
+  ];
+  showSimpleModal(`${label} の移動先`,btns,'移動先を選択（自分のゾーンのみ）',p);
 }
 
 // カードを元ゾーンに戻す（キャンセル用）
@@ -1111,16 +1108,17 @@ function exec7Move(p,card,origOwner,dest,to){
   else if(dest==='mana'){card._faceDown=false;G.players[to].mana.push(card);}
   else if(dest==='field'){card._faceDown=false;card.summonedThisTurn=true;G.players[to].field.push(card);}
   else if(dest==='shield'){
-    // シールドに追加（裏のまま）
-    const idx=G.players[to].shields.indexOf(null);
-    if(idx!==-1)G.players[to].shields[idx]=card;
-    else G.players[to].shields.push(card);
+    // シールドに追加（先頭に挿入）
+    const shields=G.players[to].shields;
+    // 先頭のnullスロットを埋めるか、末尾5枠外に追加
+    const firstNull=shields.indexOf(null);
+    if(firstNull!==-1){shields[firstNull]=card;}
+    else{shields.unshift(card);} // 先頭に追加（次に破壊されるシールド）
   }
   else if(dest==='deck'){G.players[to].deck.push(card);}
   else{card._faceDown=false;sendToGrave(origOwner,card);}
   fxEffect(p,'カード移動！');
   renderAll();
-  // 7をフィールドに置いた → 再度7効果発動
   if(card.num===7&&dest==='field'){
     card._faceDown=false;
     setTimeout(()=>show7PickModal(p),300);
@@ -1193,18 +1191,19 @@ function doLink(a,b,p){
 
 // ─ シールドブレイク ─
 function breakShield(targetP,sc){
+  const attP=targetP===1?2:1;
   if(sc.num===6||sc.num===8){
+    // STあり: 攻撃側はトーストで待機、防御側にST確認モーダル
     G.pendingST.push({player:targetP,card:sc});
-    // ST確認は processST が防御側向けに表示
+    toast(`P${attP}: シールドを破壊！ 相手が確認中...`);
     processST();
   }else{
-    // STなしでも毎回防御側に確認させる（STがバレないように）
+    // STなし: 攻撃側はトーストで待機、防御側にOK確認モーダル
     G.players[targetP].hand.push(sc);
-    const origTurn=G.turn;
-    G.turn=targetP;
-    showSimpleModal(`P${targetP}: シールド確認`,[
-      {label:'OK',cls:'g',fn:()=>{G.turn=origTurn;closeModal();}},
-    ],`シールドが手札に加わりました`);
+    toast(`P${attP}: シールドを破壊！ 相手が確認中...`);
+    showSimpleModal(`シールド確認`,[
+      {label:'OK',cls:'g',fn:()=>closeModal()},
+    ],`シールドが手札に加わりました`,targetP);
   }
 }
 function checkDirect(targetP,attP){
@@ -1216,23 +1215,21 @@ function checkDirect(targetP,attP){
 function processST(){
   if(!G.pendingST.length)return;
   const st=G.pendingST[0];
-  // ST選択は防御側(st.player)向けにモーダルを表示
-  const savedTurn=G.turn;
-  G.turn=st.player;
-  showSimpleModal(`P${st.player}: シールドトリガー！`,[
+  // 防御側(st.player)向けにモーダル表示
+  showSimpleModal(`シールドトリガー！`,[
     {label:'発動する！',cls:'g',fn:()=>{
-      G.turn=savedTurn;closeModal();
+      closeModal();
       activateST(st);G.pendingST.shift();
       if(G.pendingST.length)setTimeout(processST,300);
     }},
     {label:'手札へ',cls:'n',fn:()=>{
-      G.turn=savedTurn;closeModal();
+      closeModal();
       G.players[st.player].hand.push(st.card);
       G.pendingST.shift();
       if(G.pendingST.length)setTimeout(processST,300);
       renderAll();
     }},
-  ],'シールドトリガーを持っています'); // カード内容は表示しない
+  ],`シールドトリガーを持っています（${CJ[st.card.color]}${st.card.num}）`,st.player);
 }
 function activateST(st){
   const pl=G.players[st.player];
@@ -1317,13 +1314,20 @@ function sendToGrave(p,card){
 function checkExTjia(p){
   if(G.gameOver)return;
   const all=[...G.players[p].hand,...G.players[p].field];
-  // 条件1: num===0 のカードが手札またはフィールドに1枚以上存在する
   if(!all.some(c=>c.num===0))return;
-  // 条件2: 手札+フィールド全体で4色すべて揃っている
   const colors=new Set(all.map(c=>c.color));
   if(colors.size>=4){
+    // 自動勝利せず確認モーダルを出す（P本人向け）
     fxExTjia(p);
-    setTimeout(()=>winGame(p,'エクTジア！（0＋4色）'),1200);
+    setTimeout(()=>{
+      showSimpleModal('エクTジア達成！',[
+        {label:'エクTジア宣言！ 勝利！',cls:'g',fn:()=>{closeModal();winGame(p,'エクTジア！（0＋4色）');}},
+        {label:'まだ宣言しない',cls:'n',fn:()=>{
+          closeModal();
+          setTimeout(()=>{if(G.phase==='summon')phaseSummon();},200);
+        }},
+      ],'手札+場に0＋4色が揃っています！',p);
+    },1300);
   }
 }
 function winGame(p,reason){
@@ -1616,7 +1620,9 @@ function updateStats(){
 // ═══════════════════════════════════
 //  モーダルシステム
 // ═══════════════════════════════════
-function showCardPicker(title,subtitle,cards,owner,isMana,onSelect,extraBtns=[]){
+let _scpForPlayer=null;
+function showCardPicker(title,subtitle,cards,owner,isMana,onSelect,extraBtns=[],forPlayer=null){
+  _scpForPlayer=forPlayer;
   document.getElementById('modal-title').textContent=title;
   document.getElementById('modal-subtitle').textContent=subtitle;
   const listEl=document.getElementById('modal-list');listEl.innerHTML='';
@@ -1643,16 +1649,19 @@ function showCardPicker(title,subtitle,cards,owner,isMana,onSelect,extraBtns=[])
   renderRows();renderBtns();
   const ov=document.getElementById('modal-overlay');
   ov.classList.add('show');
-  applyModalDir();
+  applyModalDir(_scpForPlayer||G.turn);
+  _scpForPlayer=null;
 }
 
-function showSimpleModal(title,btns,subtitle=''){
+function showSimpleModal(title,btns,subtitle='',forPlayer=null){
   document.getElementById('modal-title').textContent=title;
   document.getElementById('modal-subtitle').textContent=subtitle;
   document.getElementById('modal-list').innerHTML='';
   const el=document.getElementById('modal-btns');el.innerHTML='';
   btns.forEach(b=>{const btn=document.createElement('button');btn.className='btn '+b.cls;btn.textContent=b.label;btn.onclick=b.fn;el.appendChild(btn);});
-  document.getElementById('modal-overlay').classList.add('show');
+  const ov2=document.getElementById('modal-overlay');
+  ov2.classList.add('show');
+  applyModalDir(forPlayer||G.turn);
 }
 
 // カスタムモーダル（ボディ関数でリストを直接操作）
@@ -1674,13 +1683,19 @@ function closeModal(){
   ov.classList.remove('top-modal');
 }
 // モーダルを特定プレイヤー向けに表示（forPlayer=1or2、省略時は現在のターン）
+// for=表示対象プレイヤー番号 (1 or 2)
+// オンライン: 自分のmyPlayerが2のとき上から
+// ローカル: for===2のとき上から
 function applyModalDir(forPlayer){
-  const p=forPlayer||G.turn;
   const ov=document.getElementById('modal-overlay');
-  // オンラインでP2のスマホ、またはローカルでP2ターン → 上から
-  const isTop=(ONLINE.enabled && parseInt(ONLINE.myPlayer)===2)
-             ||(!ONLINE.enabled && p===2);
-  ov.classList.toggle('top-modal', isTop);
+  const p=forPlayer||G.turn;
+  let isTop=false;
+  if(ONLINE.enabled){
+    isTop=(parseInt(ONLINE.myPlayer)===2);
+  }else{
+    isTop=(p===2);
+  }
+  ov.classList.toggle('top-modal',isTop);
 }
 
 // ═══════════════════════════════════
@@ -1770,6 +1785,23 @@ function retryGame(){
   }else{
     location.reload();
   }
+}
+// フリーズ対策: モーダルを閉じてターン状態をリセット
+function emergencyReset(){
+  closeModal();
+  G.selCard=null;G.selMana=[];G.atkCard=null;G._7selectMode=null;G.pendingST=[];
+  if(G.phase==='setup'){showTitleScreen();return;}
+  if(ONLINE.enabled&&G.turn!==ONLINE.myPlayer){
+    setBar(`P${G.turn}のターン — 相手の番です`,[]);
+  }else{
+    // 現在のフェーズを再開
+    if(G.phase==='charge')phaseCharge();
+    else if(G.phase==='summon')phaseSummon();
+    else if(G.phase==='attack')phaseAttack();
+    else if(G.phase==='untap'||G.phase==='draw')phaseUntap();
+    else phaseCharge();
+  }
+  renderAll();
 }
 
 function showTitleScreen(){
