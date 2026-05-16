@@ -413,8 +413,14 @@ function subscribeRoom(roomId) {
       // 自分のターンになった → アンタップ開始
       setTimeout(() => phaseUntap(), 300);
     } else {
-      // 相手のターン → 待機表示
-      setBar(`P${currentTurn}のターン — 相手の番です`, []);
+      // 相手が防御確認OKした → 攻撃フェーズ継続
+      if(G._shieldConfirmed && G.phase === 'attack'){
+        G._shieldConfirmed = false;
+        setTimeout(phaseAttack, 300);
+      }else{
+        // 相手のターン → 待機表示
+        setBar(`P${currentTurn}のターン — 相手の番です`, []);
+      }
     }
   });
   ONLINE.unsubscribe = () => unsub();
@@ -572,12 +578,14 @@ function phaseSummon(){
   if(ONLINE.enabled&&G.turn!==ONLINE.myPlayer)return;
   renderAll();
   const hasPairs=hasLinkPairs(G.turn);
+  const p=G.turn;
   const btns=[
     {label:'召喚',cls:'g',fn:doSummonSelected,id:'btn-summon'},
     {label:'攻撃へ ▶',cls:'o',fn:phaseAttack},
     {label:'エンド',cls:'n',fn:endTurn},
   ];
   if(hasPairs)btns.splice(1,0,{label:'リンク',cls:'b',fn:showLinkMenu});
+  if(hasExTjia(p))btns.splice(0,0,{label:'⭐エクTジア宣言',cls:'y',fn:()=>declareExTjia(p)});
   setBar(`P${G.turn} — 召喚`,btns);
   refreshSummonBtn();
 }
@@ -984,15 +992,36 @@ function showHirabonDeclareModal(p,isAttack,atkCardRef){
       fxHirabon(p,num);
       renderAll();
       if(isAttack&&atkCardRef){
-        // 破壊後に攻撃実行
-        setTimeout(()=>{showTargetModal(atkCardRef,p);},600);
+        // 破壊後に攻撃実行（showTargetModalでなくdoShieldBreakまたはcreaturepickerへ直接）
+        setTimeout(()=>{
+          // ヒラボン後は攻撃対象を選ばせる（ただし攻撃後はphaseAttackに戻らずエンド）
+          G._hirabonAttacked=false;
+          showHirabonTargetModal(atkCardRef,p);
+        },600);
       }else{
         checkExTjia(p);
         setTimeout(()=>{if(G.phase==='summon')phaseSummon();},400);
       }
     }});
   }
-  showSimpleModal('ヒラボン！ 破壊する数字を宣言',btns,'0〜9 を選択');
+  showSimpleModal('ヒラボン！ 破壊する数字を宣言',btns,'0〜9 を選択（攻撃は1回のみ）');
+}
+
+// ヒラボン後の攻撃対象選択（1回限り）
+function showHirabonTargetModal(atk,p){
+  const opp=p===1?2:1;
+  const shields=G.players[opp].shields.filter(Boolean);
+  const tapped=G.players[opp].field.filter(c=>c.tapped&&(!c.linkedWith||c.linkRoot));
+  const btns=[];
+  if(shields.length)btns.push({label:'シールドを攻撃',cls:'r',fn:()=>{closeModal();doHirabonShieldAttack(atk,p);}});
+  if(tapped.length)btns.push({label:'ナンバーズを攻撃',cls:'o',fn:()=>{closeModal();showCreaturePicker(atk,p);}});
+  if(shields.length===0)btns.push({label:'ダイレクトアタック',cls:'r',fn:()=>{closeModal();execDirectAttack(atk,p);}});
+  btns.push({label:'攻撃しない',cls:'n',fn:()=>{closeModal();phaseAttack();}});
+  showSimpleModal('ヒラボン後の攻撃対象',btns,'1回だけ攻撃できます');
+}
+function doHirabonShieldAttack(atk,p){
+  // 攻撃後phaseAttackに戻る（ただし通常の継続はしない）
+  execShieldAttack(atk,p);
 }
 
 // 7の効果: 全ゾーンから1枚選択→任意ゾーンへ移動
@@ -1213,18 +1242,50 @@ function doLink(a,b,p){
 // ─ シールドブレイク ─
 function breakShield(targetP,sc){
   const attP=targetP===1?2:1;
-  if(sc.num===6||sc.num===8){
-    // STあり: 攻撃側はトーストで待機、防御側にST確認モーダル
-    G.pendingST.push({player:targetP,card:sc});
-    toast(`P${attP}: シールドを破壊！ 相手が確認中...`);
-    processST();
+  if(ONLINE.enabled){
+    // オンライン: 防御側(targetP)のスマホかどうかで分岐
+    const iAmDefender=(parseInt(ONLINE.myPlayer)===targetP);
+    if(sc.num===6||sc.num===8){
+      G.pendingST.push({player:targetP,card:sc});
+      if(iAmDefender){
+        // 防御側: STモーダルを表示
+        processST();
+      }else{
+        // 攻撃側: トーストで待機、pushStateして防御側が操作するのを待つ
+        toast('シールドを破壊！ 相手が確認中...');
+        // 防御側がST処理後にpushStateする → subscribeで受信して攻撃フェーズ継続
+        setBar('相手がシールドを確認中...',[]);
+      }
+    }else{
+      G.players[targetP].hand.push(sc);
+      if(iAmDefender){
+        // 防御側: 確認モーダル
+        showSimpleModal('シールド確認',[
+          {label:'OK',cls:'g',fn:()=>{
+            closeModal();
+            // 防御側がOKしたらpushStateして攻撃側に通知
+            G._shieldConfirmed=true;
+            pushState();
+            renderAll();
+          }},
+        ],'シールドが手札に加わりました',targetP);
+      }else{
+        // 攻撃側: 待機
+        toast('シールドを破壊！ 相手が確認中...');
+        setBar('相手がシールドを確認中...',[]);
+      }
+    }
   }else{
-    // STなし: 攻撃側はトーストで待機、防御側にOK確認モーダル
-    G.players[targetP].hand.push(sc);
-    toast(`P${attP}: シールドを破壊！ 相手が確認中...`);
-    showSimpleModal(`シールド確認`,[
-      {label:'OK',cls:'g',fn:()=>{closeModal();if(G.phase==='attack')setTimeout(phaseAttack,200);}},
-    ],`シールドが手札に加わりました`,targetP);
+    // ローカル: 従来通り同一画面で処理
+    if(sc.num===6||sc.num===8){
+      G.pendingST.push({player:targetP,card:sc});
+      processST();
+    }else{
+      G.players[targetP].hand.push(sc);
+      showSimpleModal('シールド確認',[
+        {label:'OK',cls:'g',fn:()=>{closeModal();if(G.phase==='attack')setTimeout(phaseAttack,200);}},
+      ],'シールドが手札に加わりました',targetP);
+    }
   }
 }
 function checkDirect(targetP,attP){
@@ -1340,24 +1401,26 @@ function sendToGrave(p,card){
   }
   card.linkRoot=false;
 }
-function checkExTjia(p){
-  if(G.gameOver)return;
+// エクTジア条件チェック: 手札+フィールドに0のカードが4色（赤・青・緑・黄）全部揃う
+function hasExTjia(p){
+  if(G.gameOver)return false;
   const all=[...G.players[p].hand,...G.players[p].field];
-  if(!all.some(c=>c.num===0))return;
-  const colors=new Set(all.map(c=>c.color));
-  if(colors.size>=4){
-    // 自動勝利せず確認モーダルを出す（P本人向け）
-    fxExTjia(p);
-    setTimeout(()=>{
-      showSimpleModal('エクTジア達成！',[
-        {label:'エクTジア宣言！ 勝利！',cls:'g',fn:()=>{closeModal();winGame(p,'エクTジア！（0＋4色）');}},
-        {label:'まだ宣言しない',cls:'n',fn:()=>{
-          closeModal();
-          setTimeout(()=>{if(G.phase==='summon')phaseSummon();},200);
-        }},
-      ],'手札+場に0＋4色が揃っています！',p);
-    },1300);
-  }
+  const zeros=all.filter(c=>c.num===0);
+  const zeroColors=new Set(zeros.map(c=>c.color));
+  return zeroColors.size>=4; // 赤0・青0・緑0・黄0 全部揃い
+}
+// checkExTjia は呼び出しても何もしない（宣言ボタンで対応するため）
+function checkExTjia(p){ /* 自動発動なし - 召喚フェーズで宣言ボタンを使用 */ }
+
+function declareExTjia(p){
+  if(!hasExTjia(p)){toast('エクTジアの条件が揃っていません');return;}
+  fxExTjia(p);
+  setTimeout(()=>{
+    showSimpleModal('エクTジア宣言！',[
+      {label:'勝利宣言！',cls:'g',fn:()=>{closeModal();winGame(p,'エクTジア！（0＋4色）');}},
+      {label:'やっぱりやめる',cls:'n',fn:()=>{closeModal();phaseSummon();}},
+    ],'手札+場に赤0・青0・緑0・黄0が揃っています！',p);
+  },1300);
 }
 function winGame(p,reason){
   if(G.gameOver)return; // 重複防止
