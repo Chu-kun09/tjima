@@ -736,7 +736,7 @@ function execShieldAttack(atk,p){
   const opp=p===1?2:1;
   if(ONLINE.enabled){
     // オンライン: _pendingAtkをセットしてpush → subscribeで防御側がブロック確認
-    G._pendingAtk={atkId:atk.id, attPlayer:p};
+    G._pendingAtk={atkId:parseInt(atk.id), attPlayer:parseInt(p)};
     G.onlinePhase='block-query';
     atk.tapped=true;
     if(atk.linkedWith)atk.linkedWith.tapped=true;
@@ -1348,14 +1348,16 @@ function checkDirect(targetP,attP){
 
 // ── オンラインフェーズハンドラ ──
 function handleOnlinePhase(phase, myP){
+  console.log('[handleOnlinePhase]',phase,'myP='+myP,'_pendingAtk=',JSON.stringify(G._pendingAtk));
   if(phase==='block-query'){
     const atk=G._pendingAtk;
     const p=atk?parseInt(atk.attPlayer):null;
     const opp=p===1?2:1;
+    console.log('[block-query] attP='+p+' opp='+opp+' myP='+myP+' iAmDef='+(myP===opp));
     if(myP===opp){
       // 防御側: ブロック確認モーダルを表示
       // 自分が防御側 → ブロック確認モーダル
-      const atkCard=G.players[p]&&G.players[p].field.find(c=>c.id===atk.atkId);
+      const atkCard=G.players[p]&&G.players[p].field.find(c=>c.id==atk.atkId);
       const blockers=G.players[opp].field.filter(c=>(c.num===1||c.num===3)&&!c.tapped&&(!c.linkedWith||c.linkRoot));
       if(blockers.length){
         showSimpleModal('ブロックしますか？',[
@@ -1405,8 +1407,8 @@ function handleOnlinePhase(phase, myP){
     const p=atk?parseInt(atk.attPlayer):null;
     const opp=p===1?2:1;
     if(myP===p){
-      const atkCard=G.players[p].field.find(c=>c.id===atk.atkId);
-      const blocker=G._blockerId!=null?G.players[opp].field.find(c=>c.id===G._blockerId):null;
+      const atkCard=G.players[p].field.find(c=>c.id==atk.atkId);
+      const blocker=G._blockerId!=null?G.players[opp].field.find(c=>c.id==G._blockerId):null;
       if(atkCard&&blocker){
         G.onlinePhase=null;G._pendingAtk=null;G._blockerId=null;
         execCreatureAttack(atkCard,blocker,p);
@@ -1421,7 +1423,7 @@ function handleOnlinePhase(phase, myP){
     const p=atk?parseInt(atk.attPlayer):null;
     const opp=p===1?2:1;
     if(myP===p){
-      const atkCard=G.players[p].field.find(c=>c.id===atk.atkId);
+      const atkCard=G.players[p].field.find(c=>c.id==atk.atkId);
       if(atkCard){
         G.onlinePhase='shield-confirm';
         doShieldBreakOnline(atkCard,p);
