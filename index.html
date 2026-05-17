@@ -57,8 +57,7 @@ html,body{width:100%;height:100dvh;overflow:hidden;background:var(--bg);color:#e
 .mana-zone{flex:1;display:flex;gap:3px;flex-wrap:wrap;align-items:center;min-height:42px;padding:2px;}
 .mc{width:28px;height:40px;border-radius:5px;display:flex;align-items:center;justify-content:center;font-family:'Fredoka One',cursive;font-size:13px;border:2.5px solid white;flex-shrink:0;box-shadow:0 1px 3px rgba(0,0,0,.4);transition:transform .12s,filter .12s;color:#fff;text-shadow:-1px -1px 0 #000,1px 1px 0 #000;}
 .mc.tapped{transform:rotate(90deg);filter:brightness(.4);}
-.yellow.mc,.yellow.card{color:#111;}
-.yellow.mc .cn,.yellow.mc .cn-tl,.yellow.mc .cn-br{text-shadow:-1px -1px 0 rgba(0,0,0,.3),1px 1px 0 rgba(0,0,0,.3);}
+
 .mc.sel-mana{border-color:#fbbf24;box-shadow:0 0 0 2px #fbbf24;}
 
 /* ─ CARDS ─ */
@@ -66,8 +65,8 @@ html,body{width:100%;height:100dvh;overflow:hidden;background:var(--bg);color:#e
 .card:active{transform:scale(.88);}
 .hand-scroll .card{width:52px;height:72px;border-radius:9px;}
 /* UNO風: 楕円と数字 */
-.card .uno-oval{position:absolute;width:85%;height:72%;background:rgba(0,0,0,.25);border-radius:50%;border:none;}
-.hand-scroll .card .uno-oval{width:82%;height:70%;}
+.card .uno-oval{position:absolute;width:85%;height:72%;background:rgba(0,0,0,.25);border-radius:50%;border:none;transform:rotate(30deg);}
+.hand-scroll .card .uno-oval{width:82%;height:70%;transform:rotate(-30deg);transform:rotate(30deg);}
 .card .cn{position:relative;z-index:1;font-size:18px;line-height:1;color:#fff;text-shadow:-1.5px -1.5px 0 #000,1.5px -1.5px 0 #000,-1.5px 1.5px 0 #000,1.5px 1.5px 0 #000;}
 .hand-scroll .card .cn{font-size:28px;}
 .card .cn-tl{position:absolute;top:2px;left:3px;font-size:8px;color:#fff;text-shadow:-1px -1px 0 #000,1px 1px 0 #000;z-index:1;line-height:1;}
@@ -81,8 +80,7 @@ html,body{width:100%;height:100dvh;overflow:hidden;background:var(--bg);color:#e
 .red{background:#e63c1e;color:#fff;}
 .blue{background:#0065b3;color:#fff;}
 .green{background:#3d9e2c;color:#fff;}
-.yellow{background:#fcd205;color:#111;}
-.yellow .cn,.yellow .cn-tl,.yellow .cn-br{color:#111;text-shadow:-1.5px -1.5px 0 rgba(0,0,0,.4),1.5px -1.5px 0 rgba(0,0,0,.4),-1.5px 1.5px 0 rgba(0,0,0,.4),1.5px 1.5px 0 rgba(0,0,0,.4);}
+.yellow{background:#fcd205;color:#fff;}
 .card-back{background:#0065b3;border:3px solid white;font-size:18px;color:#fff;}
 
 /* ─ ACTION BAR ─ */
@@ -422,6 +420,8 @@ function subscribeRoom(roomId) {
         'shield-break':   pusher===myP && iAmDef,  // 防御側が自分でpushしたshield-breakはスキップ
         'shield-confirm': pusher===myP && iAmAtt,  // 攻撃側が自分でpushしたshield-confirmはスキップ
         'attack-continue':pusher===myP && iAmDef,  // 防御側が自分でpushしたattack-continueはスキップ
+        'direct-attack':  pusher===myP && iAmAtt,
+        'direct-attack':  pusher===myP && iAmAtt,  // 攻撃側が自分でpushしたdirect-attackはスキップ
       };
       if(skipPhases[phase]){return;}
 
@@ -739,12 +739,39 @@ function showTargetModal(atk,p){
 function execDirectWithBlock(atk,p,blockers){
   if(blockers.length){
     const opp=p===1?2:1;
-    showSimpleModal('ブロックしますか？',[
-      {label:'ブロックする',cls:'g',fn:()=>{closeModal();showBlockPicker(atk,p,blockers);}},
-      {label:'ブロックしない → ダイレクト',cls:'r',fn:()=>{closeModal();execDirectAttack(atk,p);}},
-    ],`ブロッカー: ${blockers.map(c=>CJ[c.color]+c.num).join(' / ')}`,opp);
+    if(ONLINE.enabled){
+      // オンライン: block-queryフェーズで防御側に渡す（シールド攻撃と同じフロー）
+      // ただしシールドはないのでblock-resolve後はダイレクトアタック
+      G._pendingAtk={atkId:parseInt(atk.id), attPlayer:parseInt(p), isDirect:true};
+      G.onlinePhase='block-query';
+      atk.tapped=true;
+      if(atk.linkedWith)atk.linkedWith.tapped=true;
+      G.atkCard=null;
+      pushState();
+      setBar('相手がブロックを検討中...',[]);
+      renderAll();
+    }else{
+      // ローカル: 防御側向けにモーダル表示
+      showSimpleModal('ブロックしますか？',[
+        {label:'ブロックする',cls:'g',fn:()=>{closeModal();showBlockPicker(atk,p,blockers);}},
+        {label:'ブロックしない → ダイレクト',cls:'r',fn:()=>{closeModal();execDirectAttack(atk,p);}},
+      ],`ブロッカー: ${blockers.map(c=>CJ[c.color]+c.num).join(' / ')}`,opp);
+    }
   }else{
-    execDirectAttack(atk,p);
+    if(ONLINE.enabled){
+      // ブロッカーなし: 即ダイレクト
+      G._pendingAtk={atkId:parseInt(atk.id), attPlayer:parseInt(p), isDirect:true, noBlock:true};
+      G.onlinePhase='shield-break'; // シールドなし=直接confirm
+      atk.tapped=true;
+      if(atk.linkedWith)atk.linkedWith.tapped=true;
+      G.atkCard=null;
+      // shield-confirmフェーズへ（シールドはないのでダイレクト判定）
+      G.onlinePhase='direct-attack';
+      pushState();
+      renderAll();
+    }else{
+      execDirectAttack(atk,p);
+    }
   }
 }
 
@@ -1402,25 +1429,42 @@ function handleOnlinePhase(phase, myP){
           }},
           {label:'ブロックしない',cls:'r',fn:()=>{
             closeModal();
-            G.onlinePhase='shield-break';
-            G._blockerId=null;
-            pushState();
-            renderAll();
+            const pendingAtk=G._pendingAtk;
+            if(pendingAtk&&pendingAtk.isDirect){
+              // ダイレクトアタック: ブロックなし確定 → block-resolveで攻撃側が処理
+              G.onlinePhase='block-resolve';
+              G._blockerId=null;
+              pushState();
+              renderAll();
+            }else{
+              G.onlinePhase='shield-break';
+              G._blockerId=null;
+              pushState();
+              renderAll();
+            }
           }},
         ],`ブロッカー: ${blockers.map(c=>CJ[c.color]+c.num).join(' / ')}`,opp);
       }else{
-        // ブロッカーなし → 直接シールド破壊
-        G.onlinePhase='shield-break';
-        G._blockerId=null;
-        pushState();
-        renderAll();
+        // ブロッカーなし
+        const atk=G._pendingAtk;
+        if(atk&&atk.isDirect){
+          // ダイレクト: ブロッカーなしなら即direct-attack
+          G.onlinePhase='direct-attack';
+          G._blockerId=null;
+          pushState();
+          renderAll();
+        }else{
+          G.onlinePhase='shield-break';
+          G._blockerId=null;
+          pushState();
+          renderAll();
+        }
       }
     }else{
       setBar('相手がブロックを検討中...',[]);
     }
   }
   else if(phase==='block-resolve'){
-    // 攻撃側: ブロック処理実行
     const atk=G._pendingAtk;
     const p=atk?parseInt(atk.attPlayer):null;
     const opp=p===1?2:1;
@@ -1428,11 +1472,38 @@ function handleOnlinePhase(phase, myP){
       const atkCard=G.players[p].field.find(c=>c.id==atk.atkId);
       const blocker=G._blockerId!=null?G.players[opp].field.find(c=>c.id==G._blockerId):null;
       if(atkCard&&blocker){
+        // ブロッカーあり: バトル解決
         G.onlinePhase=null;G._pendingAtk=null;G._blockerId=null;
         execCreatureAttack(atkCard,blocker,p);
+      }else if(atk.isDirect){
+        // ダイレクト: ブロッカーなし → ダイレクトアタック確定
+        G.onlinePhase='direct-attack';
+        G._blockerId=null;
+        pushState();
+        fxDirectAttack(p);
+        setTimeout(()=>winGame(p,'ダイレクトアタック！'),1400);
+      }else{
+        // 通常シールド攻撃でブロックなし → shield-breakへ
+        G.onlinePhase='shield-break';
+        G._blockerId=null;
+        pushState();
+        renderAll();
       }
     }else{
       setBar('相手が処理中...',[]);
+    }
+  }
+  else if(phase==='direct-attack'){
+    // 攻撃側: ダイレクトアタック確定
+    const atk=G._pendingAtk;
+    const p=atk?parseInt(atk.attPlayer):null;
+    if(myP===p){
+      G.onlinePhase=null;G._pendingAtk=null;
+      const atkCard=G.players[p].field.find(c=>c.id==atk.atkId);
+      fxDirectAttack(p);
+      setTimeout(()=>winGame(p,'ダイレクトアタック！'),1400);
+    }else{
+      setBar('ダイレクトアタック！',[]);
     }
   }
   else if(phase==='shield-break'){
