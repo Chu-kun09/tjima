@@ -1480,9 +1480,9 @@ function doShieldBreakOnline(atk,p){
   p=parseInt(p);
   const opp=p===1?2:1;
   const oppPl=G.players[opp];
-  const idx=oppPl.shields.findIndex(s=>s!==null);
-  if(idx===-1){
-    // シールドなし = ダイレクトアタック
+
+  // シールドがなければダイレクト
+  if(oppPl.shields.filter(Boolean).length===0){
     G.onlinePhase=null;G._pendingAtk=null;
     atk.tapped=true;
     if(atk.linkedWith)atk.linkedWith.tapped=true;
@@ -1490,19 +1490,54 @@ function doShieldBreakOnline(atk,p){
     winGame(p,'ダイレクトアタック！');
     return;
   }
-  const sc=oppPl.shields[idx];
-  oppPl.shields[idx]=null;
+
+  // ブレイカー数
+  const isTriple=(atk.num===0);
+  const isDouble=(atk.num===7||atk.num===9||
+    (atk.linkedWith&&(atk.num===5||atk.linkedWith.num===5)));
+
   atk.tapped=true;
   if(atk.linkedWith)atk.linkedWith.tapped=true;
-  fxShieldBreak(opp, atk.num===0);
 
-  // STチェック
-  if(sc._faceDown)sc._faceDown=false;
-  if(sc.num===6||sc.num===8){
-    G.pendingST=[{player:opp,card:sc}];
+  // シールドをキューに積む
+  const toBreak=[];
+  if(isTriple){
+    // 1枚目は直接墓地用フラグ、残り2枚まで
+    const first=oppPl.shields.findIndex(s=>s!==null);
+    if(first!==-1){
+      const sc=oppPl.shields[first];
+      oppPl.shields[first]=null;
+      sendToGrave(opp,sc); // 1枚目は直接墓地
+      fxShieldBreak(opp,true);
+    }
+    // 2枚目・3枚目
+    for(let i=0;i<2;i++){
+      const idx=oppPl.shields.findIndex(s=>s!==null);
+      if(idx!==-1){toBreak.push(oppPl.shields[idx]);oppPl.shields[idx]=null;}
+    }
+  }else if(isDouble){
+    for(let i=0;i<2;i++){
+      const idx=oppPl.shields.findIndex(s=>s!==null);
+      if(idx!==-1){toBreak.push(oppPl.shields[idx]);oppPl.shields[idx]=null;}
+    }
+    if(toBreak.length>0)fxShieldBreak(opp,false);
   }else{
-    G.players[opp].hand.push(sc);
+    const idx=oppPl.shields.findIndex(s=>s!==null);
+    if(idx!==-1){toBreak.push(oppPl.shields[idx]);oppPl.shields[idx]=null;}
+    if(toBreak.length>0)fxShieldBreak(opp,false);
   }
+
+  // 破壊したシールドを処理（ST・手札）
+  G.pendingST=[];
+  for(const sc of toBreak){
+    if(sc._faceDown)sc._faceDown=false;
+    if(sc.num===6||sc.num===8){
+      G.pendingST.push({player:opp,card:sc});
+    }else{
+      G.players[opp].hand.push(sc);
+    }
+  }
+
   G.onlinePhase='shield-confirm';
   pushState();
   renderAll();
@@ -1550,7 +1585,10 @@ function activateST(st){
     pl.graveyard.push(st.card);
     fxSpell(st.player);
     toast(`ST呪文！ P${opp}フィールドを全タップ`);
-    renderAll();return;
+    renderAll();
+    // オンライン: 8の効果（全タップ）を攻撃側に反映
+    if(ONLINE.enabled){pushState();}
+    return;
   }
   st.card.tapped=false;st.card.summonedThisTurn=false;
   pl.field.push(st.card);
@@ -1558,9 +1596,15 @@ function activateST(st){
   toast(`ST発動！ ${CJ[st.card.color]}${st.card.num}が場に`);
   renderAll();
   if(st.card.num===2){showHirabonDeclareModal(st.player,false,null);return;}
-  if(st.card.num===6){show6BounceModal(st.player);return;}
+  if(st.card.num===6){
+    // 6の効果後にpushして攻撃側に反映してからバウンス選択
+    show6BounceModal(st.player);
+    return;
+  }
   if(st.card.num===7){show7PickModal(st.player);return;}
   if(st.card.num===0){handle0OnSummon(st.player,st.card);return;}
+  // その他: pushStateして攻撃側に反映
+  if(ONLINE.enabled){pushState();}
 }
 
 // 6のST効果：相手フィールドのカード1枚を手札に戻す
@@ -1571,7 +1615,6 @@ function show6BounceModal(p){
   showCardPicker('6の効果: 相手カードを手札に戻す','選択して決定を押す',targets,opp,false,
     (card)=>{
       closeModal();
-      // リンクしていたら解除
       if(card.linkedWith){
         card.linkedWith.linkedWith=null;card.linkedWith.linkRoot=false;card.linkedWith.speedAttacker=false;card.linkedWith=null;
       }
@@ -1581,13 +1624,24 @@ function show6BounceModal(p){
       fxEffect(p,`バウンス！`);
       toast(`${CJ[card.color]}${card.num}をP${opp}の手札に戻した`);
       renderAll();
-      checkExTjia(p);
-      setTimeout(()=>{if(G.phase==='summon')phaseSummon();},400);
+      if(ONLINE.enabled&&G.phase==='attack'){
+        // STとして発動した6: 攻撃継続フェーズへ
+        G.onlinePhase='attack-continue';G._pendingAtk=null;
+        pushState();
+      }else{
+        checkExTjia(p);
+        setTimeout(()=>{if(G.phase==='summon')phaseSummon();},400);
+      }
     },
     [{label:'スキップ',cls:'n',fn:()=>{
       closeModal();
-      checkExTjia(p);
-      setTimeout(()=>{if(G.phase==='summon')phaseSummon();},400);
+      if(ONLINE.enabled&&G.phase==='attack'){
+        G.onlinePhase='attack-continue';G._pendingAtk=null;
+        pushState();
+      }else{
+        checkExTjia(p);
+        setTimeout(()=>{if(G.phase==='summon')phaseSummon();},400);
+      }
     }}]
   );
 }
