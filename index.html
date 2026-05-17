@@ -1238,23 +1238,17 @@ function exec7Move(p,card,origOwner,dest,to){
   else if(dest==='mana'){card._faceDown=false;G.players[to].mana.push(card);}
   else if(dest==='field'){card._faceDown=false;card.summonedThisTurn=true;G.players[to].field.push(card);}
   else if(dest==='shield'){
-    // 残っているシールドの「先頭（次に破壊される位置）」に配置
-    // doShieldBreakはfindIndex(s=>s!==null)で先頭のnullでないものを破壊する
-    // よってindex=0から順番に埋まっているものが先に破壊される
+    // 次に破壊される位置（先頭）にカードを追加する
+    // 既存の生きているシールドの手前に差し込み、枚数を+1する
+    // doShieldBreak/doShieldBreakOnlineはfindIndex(s=>s!==null)で先頭を破壊するため
+    // 新カードをindex=0に、既存カードを後ろにずらす
+    card._faceDown=true; // シールドは裏向き
     const shields=G.players[to].shields;
-    // index=0から見て最初にnullでないスロットの「直前のnull」に配置
-    // → 最もindex=0側のnullに配置すれば次に破壊される
-    const firstActive=shields.findIndex(s=>s!==null);
-    if(firstActive===0){
-      // 既にindex=0が埋まっている → 先頭に差し込む
-      shields.unshift(card);
-    }else if(firstActive===-1){
-      // 全部null → index=0に置く
-      shields[0]=card;
-    }else{
-      // firstActive>0 → firstActive-1のnullに置く
-      shields[firstActive-1]=card;
-    }
+    const alive=shields.filter(s=>s!==null);
+    // 新カードを先頭に、残りを後に並べてnullで5枠に揃える
+    const newShields=[card,...alive];
+    // 最大5枠（それ以上は後ろを切り落とさない＝枚数は増える仕様）
+    G.players[to].shields=newShields;
   }
   else if(dest==='deck'){G.players[to].deck.push(card);}
   else{card._faceDown=false;sendToGrave(origOwner,card);}
