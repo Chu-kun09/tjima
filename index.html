@@ -1111,8 +1111,8 @@ function showHirabonTargetModal(atk,p){
 function show7PickModal(p){
   G._7selectMode={active:true,owner:p};
   renderAll();
-  setBar(`7の効果: 任意の場所から1枚を選択`,[
-    {label:'手札/マナ/墓地から選ぶ',cls:'b',fn:()=>show7ZonePicker(p)},
+  setBar(`7の効果: フィールドをタップ or 下のボタンで選択`,[
+    {label:'手札/マナ/墓地/シールド/デッキから選ぶ',cls:'b',fn:()=>show7ZonePicker(p)},
     {label:'スキップ',cls:'n',fn:()=>{
       G._7selectMode=null;
       checkExTjia(p);
@@ -1121,45 +1121,111 @@ function show7PickModal(p){
   ]);
 }
 
-// 手札・マナ・墓地・シールド1枚目・デッキ上からカードを選ぶモーダル
+// 手札・マナ・墓地・フィールド・シールド1枚目・デッキ上からカードを選ぶモーダル
 function show7ZonePicker(p){
   const btns=[];
-  // 両プレイヤーの手札
+  // 両プレイヤーの手札（相手は枚数だけ表示）
   for(const op of [1,2]){
-    if(G.players[op].hand.length)
-      btns.push({label:`P${op}の手札`,cls:'b',fn:()=>{closeModal();show7HandPicker(p,op);}});
+    if(G.players[op].hand.length){
+      const isOpponent=(op!==p);
+      btns.push({label:`P${op}の手札 (${G.players[op].hand.length}枚)`,cls:'b',
+        fn:()=>{closeModal();show7HandPicker(p,op,isOpponent);}});
+    }
+  }
+  // 両プレイヤーのフィールド（モーダルで一覧 or ボードタップ）
+  for(const op of [1,2]){
+    if(G.players[op].field.length)
+      btns.push({label:`P${op}のフィールド (${G.players[op].field.length}枚)`,cls:'o',
+        fn:()=>{closeModal();show7FieldPicker(p,op);}});
   }
   // 両プレイヤーのマナ
   for(const op of [1,2]){
     if(G.players[op].mana.length)
-      btns.push({label:`P${op}のマナ`,cls:'g',fn:()=>{closeModal();show7ManaPicker(p,op);}});
+      btns.push({label:`P${op}のマナ (${G.players[op].mana.length}枚)`,cls:'g',
+        fn:()=>{closeModal();show7ManaPicker(p,op);}});
   }
   // 両プレイヤーの墓地
   for(const op of [1,2]){
     if(G.players[op].graveyard.length)
-      btns.push({label:`P${op}の墓地`,cls:'r',fn:()=>{closeModal();show7GravePicker(p,op);}});
+      btns.push({label:`P${op}の墓地 (${G.players[op].graveyard.length}枚)`,cls:'r',
+        fn:()=>{closeModal();show7GravePicker(p,op);}});
   }
   // 両プレイヤーのシールド1枚目（裏向き）
   for(const op of [1,2]){
     const idx=G.players[op].shields.findIndex(s=>s!==null);
     if(idx!==-1)
-      btns.push({label:`P${op}のシールド1枚目（裏）`,cls:'p',fn:()=>{closeModal();exec7Shield(p,op,idx);}});
+      btns.push({label:`P${op}のシールド先頭（裏）`,cls:'p',
+        fn:()=>{closeModal();exec7Shield(p,op,idx);}});
   }
   // 両プレイヤーのデッキ上（裏向き）
   for(const op of [1,2]){
     if(G.players[op].deck.length)
-      btns.push({label:`P${op}のデッキ上（裏）`,cls:'p',fn:()=>{closeModal();exec7DeckTop(p,op);}});
+      btns.push({label:`P${op}のデッキ上（裏）`,cls:'p',
+        fn:()=>{closeModal();exec7DeckTop(p,op);}});
   }
   btns.push({label:'キャンセル',cls:'n',fn:()=>{closeModal();show7PickModal(p);}});
   showSimpleModal('7の効果: ゾーンを選択',btns,'');
 }
 
-function show7HandPicker(p,op){
-  showCardPicker(`P${op}の手札から選択`,'選択して決定を押す',G.players[op].hand,op,false,
-    (card)=>{closeModal();G.players[op].hand=G.players[op].hand.filter(c=>c.id!==card.id);show7DestModal(p,card,op,'hand');},
+function show7HandPicker(p,op,isOpponent){
+  if(isOpponent){
+    // 相手の手札: 中身を見せずに枚数だけ表示してランダム選択
+    const hand=G.players[op].hand;
+    const listEl=document.getElementById('modal-list');
+    document.getElementById('modal-title').textContent=`P${op}の手札から選択`;
+    document.getElementById('modal-subtitle').textContent='裏向きのカードから1枚選択';
+    listEl.innerHTML='';
+    let sel=null;
+    const re=()=>{
+      listEl.innerHTML='';
+      hand.forEach((card,i)=>{
+        const row=document.createElement('div');
+        row.className='mi'+(sel===i?' sel':'');
+        row.innerHTML=`<div class="mcard card-back" style="font-size:12px">🂠</div><div style="flex:1"><div class="iname">カード ${i+1}</div><div class="idesc">裏向き</div></div>`;
+        row.onclick=()=>{sel=i;re();rb();};
+        listEl.appendChild(row);
+      });
+    };
+    const btnsEl=document.getElementById('modal-btns');
+    const rb=()=>{
+      btnsEl.innerHTML='';
+      if(sel!==null){
+        const ok=document.createElement('button');ok.className='btn g';ok.textContent='決定';
+        ok.onclick=()=>{const card=hand[sel];closeModal();G.players[op].hand=hand.filter((_,i)=>i!==sel);show7DestModal(p,card,op,'hand');};
+        btnsEl.appendChild(ok);
+      }
+      const bk=document.createElement('button');bk.className='btn n';bk.textContent='戻る';
+      bk.onclick=()=>{closeModal();show7ZonePicker(p);};
+      btnsEl.appendChild(bk);
+    };
+    re();rb();
+    document.getElementById('modal-overlay').classList.add('show');
+    applyModalDir(p);
+  }else{
+    showCardPicker(`P${op}の手札から選択`,'選択して決定を押す',G.players[op].hand,op,false,
+      (card)=>{closeModal();G.players[op].hand=G.players[op].hand.filter(c=>c.id!==card.id);show7DestModal(p,card,op,'hand');},
+      [{label:'戻る',cls:'n',fn:()=>{closeModal();show7ZonePicker(p);}}]
+    );
+  }
+}
+function show7FieldPicker(p,op){
+  const field=G.players[op].field;
+  showCardPicker(`P${op}のフィールドから選択`,'選択して決定を押す',field,op,false,
+    (card)=>{
+      closeModal();
+      G.players[op].field=G.players[op].field.filter(c=>c.id!==card.id);
+      // リンクしていたら解除
+      if(card.linkedWith){
+        card.linkedWith.linkedWith=null;card.linkedWith.linkRoot=false;
+        card.linkedWith.speedAttacker=false;card.linkedWith=null;
+      }
+      card.linkRoot=false;
+      show7DestModal(p,card,op,'field');
+    },
     [{label:'戻る',cls:'n',fn:()=>{closeModal();show7ZonePicker(p);}}]
   );
 }
+
 function show7ManaPicker(p,op){
   showCardPicker(`P${op}のマナから選択`,'選択して決定を押す',G.players[op].mana,op,false,
     (card)=>{closeModal();G.players[op].mana=G.players[op].mana.filter(c=>c.id!==card.id);show7DestModal(p,card,op,'mana');},
@@ -2052,11 +2118,19 @@ function renderMana(p){
 }
 function renderShields(p){
   const el=document.getElementById(`p${p}-shields`);el.innerHTML='';
-  for(let i=0;i<5;i++){
+  const shields=G.players[p].shields;
+  const total=Math.max(5,shields.length);
+  // 右揃え: 破壊済み(✕)が左、生きている(🛡)が右になるよう並べる
+  // shields[0]が次に破壊される = 左端に表示
+  for(let i=0;i<total;i++){
     const d=document.createElement('div');
     d.className='sc';
-    d.textContent=G.players[p].shields[i]?'🛡':'✕';
-    if(!G.players[p].shields[i])d.classList.add('broken');
+    if(shields[i]){
+      d.textContent='🛡';
+    }else{
+      d.textContent='✕';
+      d.classList.add('broken');
+    }
     el.appendChild(d);
   }
 }
