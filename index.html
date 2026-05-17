@@ -338,18 +338,23 @@ function deserializeG(snap) {
   }
 
   G = {
-    turn:        parseInt(raw.turn) || 1,
-    phase:       raw.phase || 'setup',
-    isFirstTurn: !!raw.isFirstTurn,
-    pendingST:   toArr(raw.pendingST),
-    gameOver:    !!raw.gameOver,
-    _winner:     raw._winner ? parseInt(raw._winner) : null,
-    _winReason:  raw._winReason || '',
-    _pushSeq:    raw._seq || 0,
-    selCard:     null,
-    selMana:     [],
-    atkCard:     null,
-    _7selectMode:null,
+    turn:         parseInt(raw.turn) || 1,
+    phase:        raw.phase || 'setup',
+    isFirstTurn:  !!raw.isFirstTurn,
+    pendingST:    toArr(raw.pendingST),
+    gameOver:     !!raw.gameOver,
+    _winner:      raw._winner ? parseInt(raw._winner) : null,
+    _winReason:   raw._winReason || '',
+    _pushSeq:     raw._seq || 0,
+    selCard:      null,
+    selMana:      [],
+    atkCard:      null,
+    _7selectMode: null,
+    // オンライン対戦フェーズ管理
+    onlinePhase:  raw.onlinePhase || null,
+    _pendingAtk:  raw._pendingAtk || null,
+    _blockerId:   raw._blockerId !== undefined ? raw._blockerId : null,
+    _shieldConfirmed: raw._shieldConfirmed || false,
     players: {
       1: makePlayer(p1raw),
       2: makePlayer(p2raw),
@@ -1435,7 +1440,7 @@ function handleOnlinePhase(phase, myP){
   else if(phase==='shield-confirm'){
     // 防御側: シールド確認
     const atk=G._pendingAtk;
-    const p=atk?atk.attPlayer:null;
+    const p=atk?parseInt(atk.attPlayer):null;
     const opp=p===1?2:1;
     if(myP===opp){
       // STの処理
@@ -1472,6 +1477,7 @@ function handleOnlinePhase(phase, myP){
 
 // オンライン: シールドを実際に割ってGを更新してpush
 function doShieldBreakOnline(atk,p){
+  p=parseInt(p);
   const opp=p===1?2:1;
   const oppPl=G.players[opp];
   const idx=oppPl.shields.findIndex(s=>s!==null);
@@ -1823,11 +1829,11 @@ function cardHTML(card,zone,p){
   let click='';
   const isMyTurn=ONLINE.enabled?(G.turn===ONLINE.myPlayer):true;
   if(zone==='hand'&&p===G.turn&&isMyTurn){
-    if(G.phase==='charge')click=`onclick="selectHandForCharge(G.players[${p}].hand.find(c=>c.id==${card.id}))"`;
-    else if(G.phase==='summon')click=`onclick="selectHandForSummon(G.players[${p}].hand.find(c=>c.id==${card.id}))"`;
+    if(G.phase==='charge')click=`onclick="(function(){var c=G.players[${p}].hand.find(c=>c.id==${card.id});if(c)selectHandForCharge(c);})()"`;
+    else if(G.phase==='summon')click=`onclick="(function(){var c=G.players[${p}].hand.find(c=>c.id==${card.id});if(c)selectHandForSummon(c);})()"`;
   }
   if(zone==='field'&&p===G.turn&&G.phase==='attack'&&isMyTurn){
-    click=`onclick="selectFieldForAttack(G.players[${p}].field.find(c=>c.id==${card.id}),${p})"`;
+    click=`onclick="(function(){var c=G.players[${p}].field.find(c=>c.id==${card.id});if(c)selectFieldForAttack(c,${p});})()"`;
   }
   if(zone==='field'&&G._7selectMode&&G._7selectMode.active){
     click=`onclick="on7FieldTap(${card.id},${p})"`;
