@@ -379,48 +379,68 @@ function deserializeG(snap) {
 function subscribeRoom(roomId) {
   if (ONLINE.unsubscribe) ONLINE.unsubscribe();
   const stateRef = ref(db, `rooms/${roomId}/state`);
-  // myPlayerが1(ホスト)は自分がpushしたseqをスキップ
-  // myPlayerが2(ゲスト)は全て処理（最初のstateも含む）
-  let lastMyPush = -1; // 自分がpushした最後のseq
   const unsub = onValue(stateRef, snapshot => {
     const data = snapshot.val();
     if (!data) return;
 
     const myP = parseInt(ONLINE.myPlayer);
     const pusher = parseInt(data._pusher || 0);
+    const phase = data.onlinePhase || null;
 
-    // 自分がpushしたデータが折り返してきた場合はスキップ
-    // （自分の操作はローカルで既に反映済みなので二重処理しない）
-    if (pusher === myP) {
+    // onlinePhaseがある場合: 誰が受け手かで判断してスキップを制御
+    if(phase){
+      // 受け手の判定
+      const attPlayer = (data._pendingAtk && parseInt(data._pendingAtk.attPlayer)) || 0;
+      const defPlayer = attPlayer===1?2:attPlayer===2?1:0;
+      // 自分が攻撃側フェーズの受け手かどうか
+      const iAmAtt = (myP===attPlayer);
+      const iAmDef = (myP===defPlayer);
+
+      // 自分がpushして自分に戻ってきたが、自分が次のアクションをすべきフェーズは処理
+      // 例: 防御側がblock-queryでブロック選択→push(pusher=def)→defのsubscribeはskipしたい
+      //     攻撃側がblock-queryをpush→attのsubscribeはskip、defのsubscribeは処理
+      const skipPhases = {
+        'block-query':    pusher===myP && iAmAtt,  // 攻撃側が自分でpushしたblock-queryはスキップ
+        'block-resolve':  pusher===myP && iAmDef,  // 防御側が自分でpushしたblock-resolveはスキップ
+        'shield-break':   pusher===myP && iAmDef,  // 防御側が自分でpushしたshield-breakはスキップ
+        'shield-confirm': pusher===myP && iAmAtt,  // 攻撃側が自分でpushしたshield-confirmはスキップ
+        'attack-continue':pusher===myP && iAmDef,  // 防御側が自分でpushしたattack-continueはスキップ
+      };
+      if(skipPhases[phase]){return;}
+
+      deserializeG(data);
+      renderAll();
+      adjustLayout();
+      if(G.gameOver){showWinScreen();return;}
+      handleOnlinePhase(phase, myP);
       return;
     }
+
+    // onlinePhaseなし: 通常のターン進行
+    // 自分がpushしたデータはスキップ（ローカルで既に反映済み）
+    if(pusher === myP){return;}
 
     deserializeG(data);
     renderAll();
     adjustLayout();
 
-    if (G.gameOver) {
-      const winner = G._winner || G.turn;
-      document.getElementById('win-title').textContent = `🎉 P${winner} の勝利！`;
-      document.getElementById('win-sub').textContent = G._winReason || '';
-      document.getElementById('win-screen').classList.add('show');
-      return;
-    }
+    if(G.gameOver){showWinScreen();return;}
 
     const currentTurn = parseInt(G.turn);
-
-    // オンラインフェーズ処理
-    if(G.onlinePhase){
-      handleOnlinePhase(G.onlinePhase, myP);
-      return;
-    }
-    if (currentTurn === myP) {
+    if(currentTurn === myP){
       setTimeout(() => phaseUntap(), 300);
-    } else {
+    }else{
       setBar(`P${currentTurn}のターン — 相手の番です`, []);
     }
   });
   ONLINE.unsubscribe = () => unsub();
+}
+
+function showWinScreen(){
+  const winner = G._winner || G.turn;
+  document.getElementById('win-title').textContent = `🎉 P${winner} の勝利！`;
+  document.getElementById('win-sub').textContent = G._winReason || '';
+  document.getElementById('win-screen').classList.add('show');
 }
 
 // ─ オンライン時のアクションバー制御 ─
@@ -1327,14 +1347,13 @@ function checkDirect(targetP,attP){
 }
 
 // ── オンラインフェーズハンドラ ──
-// 戻り値: true=処理した, false=スキップしてよい（自分には関係ないフェーズ）
-function handleOnlinePhase(phase, myP, pusher){
+function handleOnlinePhase(phase, myP){
   if(phase==='block-query'){
-    // 防御側: ブロック確認（攻撃側がpushしたデータを防御側が受け取る）
     const atk=G._pendingAtk;
-    const p=atk?atk.attPlayer:null;
+    const p=atk?parseInt(atk.attPlayer):null;
     const opp=p===1?2:1;
     if(myP===opp){
+      // 防御側: ブロック確認モーダルを表示
       // 自分が防御側 → ブロック確認モーダル
       const atkCard=G.players[p]&&G.players[p].field.find(c=>c.id===atk.atkId);
       const blockers=G.players[opp].field.filter(c=>(c.num===1||c.num===3)&&!c.tapped&&(!c.linkedWith||c.linkRoot));
@@ -1377,15 +1396,13 @@ function handleOnlinePhase(phase, myP, pusher){
         renderAll();
       }
     }else{
-      // 攻撃側: 待機（自分がpushしたので処理済み）
-      if(pusher===myP){setBar('相手がブロックを検討中...',[]);}
-      return false; // 攻撃側は何もしない
+      setBar('相手がブロックを検討中...',[]);
     }
   }
   else if(phase==='block-resolve'){
     // 攻撃側: ブロック処理実行
     const atk=G._pendingAtk;
-    const p=atk?atk.attPlayer:null;
+    const p=atk?parseInt(atk.attPlayer):null;
     const opp=p===1?2:1;
     if(myP===p){
       const atkCard=G.players[p].field.find(c=>c.id===atk.atkId);
@@ -1396,13 +1413,12 @@ function handleOnlinePhase(phase, myP, pusher){
       }
     }else{
       setBar('相手が処理中...',[]);
-      return false;
     }
   }
   else if(phase==='shield-break'){
     // 攻撃側: シールド実際に割る
     const atk=G._pendingAtk;
-    const p=atk?atk.attPlayer:null;
+    const p=atk?parseInt(atk.attPlayer):null;
     const opp=p===1?2:1;
     if(myP===p){
       const atkCard=G.players[p].field.find(c=>c.id===atk.atkId);
@@ -1412,7 +1428,6 @@ function handleOnlinePhase(phase, myP, pusher){
       }
     }else{
       setBar('シールドが割られました...',[]);
-      return false;
     }
   }
   else if(phase==='shield-confirm'){
@@ -1438,7 +1453,6 @@ function handleOnlinePhase(phase, myP, pusher){
       }
     }else{
       setBar('相手がシールドを確認中...',[]);
-      return false;
     }
   }
   else if(phase==='attack-continue'){
@@ -1449,7 +1463,7 @@ function handleOnlinePhase(phase, myP, pusher){
       pushState();
       setTimeout(phaseAttack,200);
     }else{
-      return false;
+      setBar('相手が攻撃継続中...',[]);
     }
   }
 }
