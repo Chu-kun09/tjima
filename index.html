@@ -55,25 +55,35 @@ html,body{width:100%;height:100dvh;overflow:hidden;background:var(--bg);color:#e
 
 /* ─ MANA ─ */
 .mana-zone{flex:1;display:flex;gap:3px;flex-wrap:wrap;align-items:center;min-height:42px;padding:2px;}
-.mc{width:28px;height:40px;border-radius:5px;display:flex;align-items:center;justify-content:center;font-family:'Fredoka One',cursive;font-size:13px;border:1.5px solid rgba(255,255,255,.18);flex-shrink:0;box-shadow:0 1px 3px rgba(0,0,0,.4);transition:transform .12s,filter .12s;}
+.mc{width:28px;height:40px;border-radius:5px;display:flex;align-items:center;justify-content:center;font-family:'Fredoka One',cursive;font-size:13px;border:2.5px solid white;flex-shrink:0;box-shadow:0 1px 3px rgba(0,0,0,.4);transition:transform .12s,filter .12s;color:#fff;text-shadow:-1px -1px 0 #000,1px 1px 0 #000;}
 .mc.tapped{transform:rotate(90deg);filter:brightness(.4);}
+.yellow.mc,.yellow.card{color:#111;}
+.yellow.mc .cn,.yellow.mc .cn-tl,.yellow.mc .cn-br{text-shadow:-1px -1px 0 rgba(0,0,0,.3),1px 1px 0 rgba(0,0,0,.3);}
 .mc.sel-mana{border-color:#fbbf24;box-shadow:0 0 0 2px #fbbf24;}
 
 /* ─ CARDS ─ */
-.card{width:36px;height:52px;border-radius:6px;display:flex;flex-direction:column;align-items:center;justify-content:center;font-family:'Fredoka One',cursive;cursor:pointer;border:2px solid rgba(255,255,255,.15);transition:transform .12s,filter .12s;flex-shrink:0;overflow:hidden;box-shadow:0 2px 6px rgba(0,0,0,.5);}
+.card{width:36px;height:52px;border-radius:6px;display:flex;flex-direction:column;align-items:center;justify-content:center;font-family:'Fredoka One',cursive;cursor:pointer;border:3px solid white;transition:transform .12s,filter .12s;flex-shrink:0;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,.6);position:relative;}
 .card:active{transform:scale(.88);}
 .hand-scroll .card{width:52px;height:72px;border-radius:9px;}
-.hand-scroll .card .cn{font-size:26px;}
-.hand-scroll .card .ci{font-size:11px;}
-.cn{font-size:18px;line-height:1;}.ci{font-size:8px;opacity:.9;}
+/* UNO風: 楕円と数字 */
+.card .uno-oval{position:absolute;width:85%;height:72%;background:rgba(0,0,0,.25);border-radius:50%;border:none;}
+.hand-scroll .card .uno-oval{width:82%;height:70%;}
+.card .cn{position:relative;z-index:1;font-size:18px;line-height:1;color:#fff;text-shadow:-1.5px -1.5px 0 #000,1.5px -1.5px 0 #000,-1.5px 1.5px 0 #000,1.5px 1.5px 0 #000;}
+.hand-scroll .card .cn{font-size:28px;}
+.card .cn-tl{position:absolute;top:2px;left:3px;font-size:8px;color:#fff;text-shadow:-1px -1px 0 #000,1px 1px 0 #000;z-index:1;line-height:1;}
+.card .cn-br{position:absolute;bottom:2px;right:3px;font-size:8px;color:#fff;text-shadow:-1px -1px 0 #000,1px 1px 0 #000;z-index:1;transform:rotate(180deg);line-height:1;}
+.hand-scroll .card .cn-tl{font-size:11px;top:3px;left:4px;}
+.hand-scroll .card .cn-br{font-size:11px;bottom:3px;right:4px;}
+.ci{display:none;}
 .card.tapped{transform:rotate(90deg);filter:brightness(.6);}
 .card.linked{border-color:#fbbf24;}
 .card.sel-atk{border-color:#22c55e;box-shadow:0 0 0 3px #22c55e;}
-.red{background:linear-gradient(145deg,#dc2626,#7f1d1d);color:#fff;}
-.blue{background:linear-gradient(145deg,#2563eb,#1e3a8a);color:#fff;}
-.green{background:linear-gradient(145deg,#16a34a,#14532d);color:#fff;}
-.yellow{background:linear-gradient(145deg,#ca8a04,#78350f);color:#fff;}
-.card-back{background:linear-gradient(145deg,#1a1a2e,#0f172a);border:2px solid #4a2d8a;font-size:18px;color:#4a2d8a;}
+.red{background:#e63c1e;color:#fff;}
+.blue{background:#0065b3;color:#fff;}
+.green{background:#3d9e2c;color:#fff;}
+.yellow{background:#fcd205;color:#111;}
+.yellow .cn,.yellow .cn-tl,.yellow .cn-br{color:#111;text-shadow:-1.5px -1.5px 0 rgba(0,0,0,.4),1.5px -1.5px 0 rgba(0,0,0,.4),-1.5px 1.5px 0 rgba(0,0,0,.4),1.5px 1.5px 0 rgba(0,0,0,.4);}
+.card-back{background:#0065b3;border:3px solid white;font-size:18px;color:#fff;}
 
 /* ─ ACTION BAR ─ */
 #action-bar{position:fixed;bottom:0;left:0;right:0;background:rgba(10,14,26,.97);border-top:2px solid #4a2d8a;padding:6px 10px;padding-bottom:calc(6px + var(--safe-b));z-index:100;backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);}
@@ -101,7 +111,7 @@ html,body{width:100%;height:100dvh;overflow:hidden;background:var(--bg);color:#e
 .mi{display:flex;align-items:center;gap:10px;background:rgba(255,255,255,.04);border-radius:10px;padding:8px 10px;cursor:pointer;border:1.5px solid transparent;transition:background .12s;min-height:52px;}
 .mi:active{background:rgba(74,45,138,.3);}
 .mi.sel{border-color:#fbbf24;background:rgba(251,191,36,.08);}
-.mcard{width:36px;height:50px;border-radius:5px;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-family:'Fredoka One',cursive;font-size:18px;border:1.5px solid rgba(255,255,255,.15);}
+.mcard{width:36px;height:50px;border-radius:5px;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-family:'Fredoka One',cursive;font-size:18px;border:2.5px solid white;color:#fff;text-shadow:-1.5px -1.5px 0 #000,1.5px 1.5px 0 #000;position:relative;overflow:hidden;}
 .mcard.tapped{transform:rotate(15deg);filter:brightness(.5);}
 .iname{font-weight:900;font-size:13px;color:#e8ecf4;}
 .idesc{color:#7c8faa;font-size:10px;line-height:1.3;}
@@ -388,6 +398,8 @@ function subscribeRoom(roomId) {
     const data = snapshot.val();
     if (!data) return;
 
+    // ONLINE.myPlayer未設定またはsetupフェーズは無視
+    if (!ONLINE.myPlayer) return;
     const myP = parseInt(ONLINE.myPlayer);
     const pusher = parseInt(data._pusher || 0);
     const phase = data.onlinePhase || null;
@@ -945,9 +957,10 @@ function showHirabonAttackDiscard(p){
 
 function endTurn(){
   closeModal();G.atkCard=null;G.selCard=null;G.selMana=[];
+  // onlinephaseを必ずクリアしてからターンを渡す
+  G.onlinePhase=null;G._pendingAtk=null;G._blockerId=null;
   G.turn=G.turn===1?2:1;
   if(ONLINE.enabled){
-    // オンライン: 自分側はpushStateして待機。相手側のsubscribeがphaseUntapを呼ぶ
     pushState();
     renderAll();
     setBar(`P${G.turn}のターン — 相手の番です`,[]);
@@ -1894,7 +1907,10 @@ function cardHTML(card,zone,p){
   }
   return `<div class="${cls.join(' ')}" ${click}
     oncontextmenu="showCinfo(event,${card.id});return false;">
-    <div class="cn">${card.num}</div><div class="ci">${ICON[card.num]||''}</div>
+    <div class="uno-oval"></div>
+    <span class="cn-tl">${card.num}</span>
+    <div class="cn">${card.num}</div>
+    <span class="cn-br">${card.num}</span>
   </div>`;
 }
 
@@ -1908,7 +1924,7 @@ function renderHand(p){
   }
   el.innerHTML=showFront
     ?G.players[p].hand.map(c=>cardHTML(c,'hand',p)).join('')
-    :G.players[p].hand.map(()=>`<div class="card card-back">🂠</div>`).join('');
+    :G.players[p].hand.map(()=>`<div class="card card-back"><div class="uno-oval" style="background:rgba(255,255,255,.25)"></div><div class="cn" style="font-size:14px">T</div></div>`).join('');
 }
 function renderField(p){
   // リンクのサブカード（linkRoot=false&&linkedWithあり）はルートと一緒に描画
@@ -1946,9 +1962,11 @@ function linkedPairHTML(root,sub,p){
     <div class="${cls.join(' ')}" ${click}
       oncontextmenu="showCinfo(event,${root.id});return false;"
       style="position:relative;">
+      <div class="uno-oval"></div>
+      <span class="cn-tl">${root.num}</span>
       <div class="cn">${root.num}</div>
-      <div class="ci">${ICON[root.num]||''}</div>
-      <div style="position:absolute;bottom:1px;right:2px;font-size:7px;color:rgba(255,255,255,.7)">ATK:${pow}</div>
+      <span class="cn-br">${root.num}</span>
+      <div style="position:absolute;bottom:1px;right:2px;font-size:6px;color:rgba(255,255,255,.85);z-index:2;text-shadow:none;">LINK</div>
     </div>
     <div style="font-size:7px;color:#fbbf24;font-weight:700;line-height:1">+${sub.num}</div>
   </div>`;
@@ -2218,7 +2236,8 @@ async function createRoom(){
       closeModal();
       toast('相手が参加しました！ゲーム開始！');
       initGame();
-      pushState();
+      // P2がsubscribeした後にpushするので少し待つ
+      setTimeout(()=>{ pushState(); }, 500);
       subscribeRoom(roomId);
       renderAll();
       phaseUntap();
