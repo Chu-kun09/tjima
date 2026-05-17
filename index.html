@@ -1016,21 +1016,25 @@ function showHirabonDeclareModal(p,isAttack,atkCardRef){
   showSimpleModal('ヒラボン！ 破壊する数字を宣言',btns,'0〜9 を選択（攻撃は1回のみ）');
 }
 
-// ヒラボン後の攻撃対象選択（1回限り）
+// ヒラボン後の攻撃対象選択（1回限り・「攻撃しない」なし）
 function showHirabonTargetModal(atk,p){
+  // atkがフィールドに存在するか確認（2でatkが消えていれば攻撃しない）
+  if(!G.players[p].field.some(c=>c.id===atk.id)){
+    toast('ヒラボンで消えたため攻撃できません');
+    setTimeout(phaseAttack,300);
+    return;
+  }
   const opp=p===1?2:1;
   const shields=G.players[opp].shields.filter(Boolean);
   const tapped=G.players[opp].field.filter(c=>c.tapped&&(!c.linkedWith||c.linkRoot));
   const btns=[];
-  if(shields.length)btns.push({label:'シールドを攻撃',cls:'r',fn:()=>{closeModal();doHirabonShieldAttack(atk,p);}});
+  if(shields.length)btns.push({label:'シールドを攻撃',cls:'r',fn:()=>{closeModal();execShieldAttack(atk,p);}});
   if(tapped.length)btns.push({label:'ナンバーズを攻撃',cls:'o',fn:()=>{closeModal();showCreaturePicker(atk,p);}});
-  if(shields.length===0)btns.push({label:'ダイレクトアタック',cls:'r',fn:()=>{closeModal();execDirectAttack(atk,p);}});
-  btns.push({label:'攻撃しない',cls:'n',fn:()=>{closeModal();phaseAttack();}});
+  if(!shields.length){
+    const untappedBlockers=G.players[opp].field.filter(c=>(c.num===1||c.num===3)&&!c.tapped&&(!c.linkedWith||c.linkRoot));
+    btns.push({label:'ダイレクトアタック',cls:'r',fn:()=>{closeModal();execDirectWithBlock(atk,p,untappedBlockers);}});
+  }
   showSimpleModal('ヒラボン後の攻撃対象',btns,'1回だけ攻撃できます');
-}
-function doHirabonShieldAttack(atk,p){
-  // 攻撃後phaseAttackに戻る（ただし通常の継続はしない）
-  execShieldAttack(atk,p);
 }
 
 // 7の効果: 全ゾーンから1枚選択→任意ゾーンへ移動
@@ -1167,23 +1171,36 @@ function exec7Move(p,card,origOwner,dest,to){
   else if(dest==='mana'){card._faceDown=false;G.players[to].mana.push(card);}
   else if(dest==='field'){card._faceDown=false;card.summonedThisTurn=true;G.players[to].field.push(card);}
   else if(dest==='shield'){
-    // シールドに追加（先頭に挿入）
+    // 残っているシールドの「先頭（次に破壊される位置）」に配置
+    // doShieldBreakはfindIndex(s=>s!==null)で先頭のnullでないものを破壊する
+    // よってindex=0から順番に埋まっているものが先に破壊される
     const shields=G.players[to].shields;
-    // 先頭のnullスロットを埋めるか、末尾5枠外に追加
-    const firstNull=shields.indexOf(null);
-    if(firstNull!==-1){shields[firstNull]=card;}
-    else{shields.unshift(card);} // 先頭に追加（次に破壊されるシールド）
+    // index=0から見て最初にnullでないスロットの「直前のnull」に配置
+    // → 最もindex=0側のnullに配置すれば次に破壊される
+    const firstActive=shields.findIndex(s=>s!==null);
+    if(firstActive===0){
+      // 既にindex=0が埋まっている → 先頭に差し込む
+      shields.unshift(card);
+    }else if(firstActive===-1){
+      // 全部null → index=0に置く
+      shields[0]=card;
+    }else{
+      // firstActive>0 → firstActive-1のnullに置く
+      shields[firstActive-1]=card;
+    }
   }
   else if(dest==='deck'){G.players[to].deck.push(card);}
   else{card._faceDown=false;sendToGrave(origOwner,card);}
   fxEffect(p,'カード移動！');
   renderAll();
-  if(card.num===7&&dest==='field'){
-    card._faceDown=false;
-    setTimeout(()=>show7PickModal(p),300);
-    return;
-  }
   G._7selectMode=null;
+  if(dest==='field'){
+    card._faceDown=false;
+    // フィールドに出たカードの効果発動
+    if(card.num===7){setTimeout(()=>show7PickModal(p),300);return;}
+    if(card.num===2){showHirabonDeclareModal(p,false,null);return;}
+    if(card.num===6){show6BounceModal(p);return;}
+  }
   checkExTjia(p);
   setTimeout(()=>{if(G.phase==='summon')phaseSummon();},400);
 }
@@ -1266,6 +1283,7 @@ function breakShield(targetP,sc){
         setBar('相手がシールドを確認中...',[]);
       }
     }else{
+      if(sc._faceDown)sc._faceDown=false; // 裏向きフラグをリセット
       G.players[targetP].hand.push(sc);
       if(iAmDefender){
         // 防御側: 確認モーダル
@@ -1290,6 +1308,7 @@ function breakShield(targetP,sc){
       G.pendingST.push({player:targetP,card:sc});
       processST();
     }else{
+      if(sc._faceDown)sc._faceDown=false;
       G.players[targetP].hand.push(sc);
       showSimpleModal('シールド確認',[
         {label:'OK',cls:'g',fn:()=>{closeModal();if(G.phase==='attack')setTimeout(phaseAttack,200);}},
@@ -1308,9 +1327,10 @@ function checkDirect(targetP,attP){
 }
 
 // ── オンラインフェーズハンドラ ──
-function handleOnlinePhase(phase, myP){
+// 戻り値: true=処理した, false=スキップしてよい（自分には関係ないフェーズ）
+function handleOnlinePhase(phase, myP, pusher){
   if(phase==='block-query'){
-    // 防御側: ブロック確認
+    // 防御側: ブロック確認（攻撃側がpushしたデータを防御側が受け取る）
     const atk=G._pendingAtk;
     const p=atk?atk.attPlayer:null;
     const opp=p===1?2:1;
@@ -1357,8 +1377,9 @@ function handleOnlinePhase(phase, myP){
         renderAll();
       }
     }else{
-      // 攻撃側: 待機
-      setBar('相手がブロックを検討中...',[]);
+      // 攻撃側: 待機（自分がpushしたので処理済み）
+      if(pusher===myP){setBar('相手がブロックを検討中...',[]);}
+      return false; // 攻撃側は何もしない
     }
   }
   else if(phase==='block-resolve'){
@@ -1375,6 +1396,7 @@ function handleOnlinePhase(phase, myP){
       }
     }else{
       setBar('相手が処理中...',[]);
+      return false;
     }
   }
   else if(phase==='shield-break'){
@@ -1390,6 +1412,7 @@ function handleOnlinePhase(phase, myP){
       }
     }else{
       setBar('シールドが割られました...',[]);
+      return false;
     }
   }
   else if(phase==='shield-confirm'){
@@ -1415,15 +1438,18 @@ function handleOnlinePhase(phase, myP){
       }
     }else{
       setBar('相手がシールドを確認中...',[]);
+      return false;
     }
   }
   else if(phase==='attack-continue'){
     // 攻撃側: 攻撃継続
-    const p=G.turn; // ターンは変わっていない
+    const p=G.turn;
     if(myP===p){
       G.onlinePhase=null;G._pendingAtk=null;
       pushState();
       setTimeout(phaseAttack,200);
+    }else{
+      return false;
     }
   }
 }
@@ -1449,6 +1475,7 @@ function doShieldBreakOnline(atk,p){
   fxShieldBreak(opp, atk.num===0);
 
   // STチェック
+  if(sc._faceDown)sc._faceDown=false;
   if(sc.num===6||sc.num===8){
     G.pendingST=[{player:opp,card:sc}];
   }else{
