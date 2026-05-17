@@ -420,8 +420,7 @@ function subscribeRoom(roomId) {
         'shield-break':   pusher===myP && iAmDef,  // 防御側が自分でpushしたshield-breakはスキップ
         'shield-confirm': pusher===myP && iAmAtt,  // 攻撃側が自分でpushしたshield-confirmはスキップ
         'attack-continue':pusher===myP && iAmDef,  // 防御側が自分でpushしたattack-continueはスキップ
-        'direct-attack':  pusher===myP && iAmAtt,
-        'direct-attack':  pusher===myP && iAmAtt,  // 攻撃側が自分でpushしたdirect-attackはスキップ
+        'direct-attack':  false,  // 双方が受け取る
       };
       if(skipPhases[phase]){return;}
 
@@ -760,15 +759,18 @@ function execDirectWithBlock(atk,p,blockers){
   }else{
     if(ONLINE.enabled){
       // ブロッカーなし: 即ダイレクト
-      G._pendingAtk={atkId:parseInt(atk.id), attPlayer:parseInt(p), isDirect:true, noBlock:true};
-      G.onlinePhase='shield-break'; // シールドなし=直接confirm
+      // ブロッカーなし即ダイレクト: gameOverをセットしてdirect-attackをpush
+      G._pendingAtk={atkId:parseInt(atk.id), attPlayer:parseInt(p), isDirect:true};
+      G.onlinePhase='direct-attack';
+      G.gameOver=true;
+      G._winner=p;
+      G._winReason='ダイレクトアタック！';
       atk.tapped=true;
       if(atk.linkedWith)atk.linkedWith.tapped=true;
       G.atkCard=null;
-      // shield-confirmフェーズへ（シールドはないのでダイレクト判定）
-      G.onlinePhase='direct-attack';
       pushState();
-      renderAll();
+      fxDirectAttack(p);
+      setTimeout(()=>winGame(p,'ダイレクトアタック！'),1400);
     }else{
       execDirectAttack(atk,p);
     }
@@ -1476,9 +1478,12 @@ function handleOnlinePhase(phase, myP){
         G.onlinePhase=null;G._pendingAtk=null;G._blockerId=null;
         execCreatureAttack(atkCard,blocker,p);
       }else if(atk.isDirect){
-        // ダイレクト: ブロッカーなし → ダイレクトアタック確定
+        // ダイレクト: ブロッカーなし → direct-attackをpushして双方に通知
         G.onlinePhase='direct-attack';
         G._blockerId=null;
+        G.gameOver=true;
+        G._winner=p;
+        G._winReason='ダイレクトアタック！';
         pushState();
         fxDirectAttack(p);
         setTimeout(()=>winGame(p,'ダイレクトアタック！'),1400);
@@ -1494,16 +1499,12 @@ function handleOnlinePhase(phase, myP){
     }
   }
   else if(phase==='direct-attack'){
-    // 攻撃側: ダイレクトアタック確定
+    // 双方: ダイレクトアタック確定 → 双方でwinGame表示
     const atk=G._pendingAtk;
     const p=atk?parseInt(atk.attPlayer):null;
-    if(myP===p){
-      G.onlinePhase=null;G._pendingAtk=null;
-      const atkCard=G.players[p].field.find(c=>c.id==atk.atkId);
+    if(p){
       fxDirectAttack(p);
       setTimeout(()=>winGame(p,'ダイレクトアタック！'),1400);
-    }else{
-      setBar('ダイレクトアタック！',[]);
     }
   }
   else if(phase==='shield-break'){
@@ -1567,11 +1568,17 @@ function doShieldBreakOnline(atk,p){
 
   // シールドがなければダイレクト
   if(oppPl.shields.filter(Boolean).length===0){
-    G.onlinePhase=null;G._pendingAtk=null;
+    // シールドなし = ダイレクトアタック: gameOverをpushして双方に通知
     atk.tapped=true;
     if(atk.linkedWith)atk.linkedWith.tapped=true;
+    G.onlinePhase='direct-attack';
+    G.gameOver=true;
+    G._winner=p;
+    G._winReason='ダイレクトアタック！';
+    G._pendingAtk=null;
     pushState();
-    winGame(p,'ダイレクトアタック！');
+    fxDirectAttack(p);
+    setTimeout(()=>winGame(p,'ダイレクトアタック！'),1400);
     return;
   }
 
