@@ -131,16 +131,16 @@ html,body{width:100%;height:100dvh;overflow:hidden;background:var(--bg);color:#e
 
 /* ─ EFFECTS ─ */
 #fx-layer{position:fixed;inset:0;pointer-events:none;z-index:800;}
-.fx-particle{position:absolute;border-radius:50%;animation:fx-pop .6s ease-out forwards;}
+.fx-particle{position:absolute;border-radius:50%;animation:fx-pop 1.0s ease-out forwards;}
 @keyframes fx-pop{0%{opacity:1;transform:scale(0) translate(0,0);}100%{opacity:0;transform:scale(1.5) translate(var(--dx),var(--dy));}}
 .fx-flash{position:fixed;inset:0;pointer-events:none;animation:fx-flash .35s ease-out forwards;}
 @keyframes fx-flash{0%{opacity:.7;}100%{opacity:0;}}
-.fx-slam{position:absolute;border-radius:50%;border:4px solid currentColor;animation:fx-slam .5s ease-out forwards;}
+.fx-slam{position:absolute;border-radius:50%;border:4px solid currentColor;animation:fx-slam .9s ease-out forwards;}
 @keyframes fx-slam{0%{opacity:1;transform:scale(.2);}80%{opacity:.8;}100%{opacity:0;transform:scale(3);}}
 .fx-shield-break{position:absolute;font-size:48px;animation:fx-sb .6s ease-out forwards;}
 @keyframes fx-sb{0%{opacity:1;transform:scale(1) rotate(0deg);}100%{opacity:0;transform:scale(2) rotate(20deg)translateY(-30px);}}
-.fx-word{position:fixed;left:50%;top:40%;transform:translate(-50%,-50%);font-family:'Fredoka One',cursive;text-align:center;pointer-events:none;animation:fx-word .9s ease-out forwards;z-index:900;}
-@keyframes fx-word{0%{opacity:1;transform:translate(-50%,-50%) scale(.5);}50%{opacity:1;transform:translate(-50%,-50%) scale(1.2);}100%{opacity:0;transform:translate(-50%,-60%) scale(1);}}
+.fx-word{position:fixed;left:50%;top:40%;transform:translate(-50%,-50%);font-family:'Fredoka One',cursive;text-align:center;pointer-events:none;animation:fx-word 1.8s ease-out forwards;z-index:900;
+@keyframes fx-word{0%{opacity:1;transform:translate(-50%,-50%) scale(.5);}40%{opacity:1;transform:translate(-50%,-50%) scale(1.15);}80%{opacity:1;transform:translate(-50%,-55%) scale(1);}100%{opacity:0;transform:translate(-50%,-65%) scale(1);}}
 .fx-direct{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none;animation:fx-dir 1.4s ease-out forwards;}
 @keyframes fx-dir{0%{opacity:0;}20%{opacity:1;}80%{opacity:1;}100%{opacity:0;}}
 </style>
@@ -500,6 +500,10 @@ function playRemoteFx(fx, pusherP){
     case 'link':
       fxWord(fx.label||'リンク！','#fbbf24',26);
       break;
+    case 'iya':
+      fxWord('嫌！','#f87171',36);
+      fxParticles(window.innerWidth/2,window.innerHeight/2,'#f87171',12);
+      break;
   }
 }
 
@@ -781,7 +785,7 @@ function showTargetModal(atk,p){
   }
   if(atk.num===2)btns.push({label:'ヒラボン（手札捨て→破壊→攻撃）',cls:'y',fn:()=>{closeModal();showHirabonAttackDiscard(p);}});
   btns.push({label:'キャンセル',cls:'n',fn:()=>{closeModal();G.atkCard=null;phaseAttack();}});
-  const breaker=(atk.num===0)?'🔱トリプル ':(atk.num===7||atk.num===9)?'⚔ダブル ':'⚔ ';
+  const breaker=(atk.num===7||atk.num===9)?'⚔ダブル ':'⚔ ';
   showSimpleModal(
     `${breaker}${atkLabel(atk)} が攻撃！`,
     btns,
@@ -1137,6 +1141,7 @@ function showHirabonDeclareModal(p,isAttack,atkCardRef){
       const opp=p===1?2:1;
       destroyByNum(p,num);destroyByNum(opp,num);
       fxHirabon(p,num);
+      if(ONLINE.enabled) pushState({type:'hirabon',num:num});
       renderAll();
       if(isAttack&&atkCardRef){
         // 破壊後に攻撃実行（showTargetModalでなくdoShieldBreakまたはcreaturepickerへ直接）
@@ -1181,6 +1186,11 @@ function showHirabonTargetModal(atk,p){
 
 function show7PickModal(p){
   G._7selectMode={active:true,owner:p};
+  // 「嫌」エフェクト（相手フィールド側に表示）
+  const opp=p===1?2:1;
+  fxWord('嫌！','#f87171',36);
+  fxParticles(window.innerWidth/2,window.innerHeight*(opp===1?0.65:0.35),'#f87171',12);
+  if(ONLINE.enabled) pushState({type:'iya'});
   renderAll();
   setBar(`7の効果: フィールドをタップ or 下のボタンで選択`,[
     {label:'手札/マナ/墓地/シールド/デッキから選ぶ',cls:'b',fn:()=>show7ZonePicker(p)},
@@ -1968,7 +1978,7 @@ function fxParticles(x,y,color,count=12,big=false){
     const sz=big?(8+Math.random()*12):(4+Math.random()*8);
     el.style.cssText=`left:${x}px;top:${y}px;width:${sz}px;height:${sz}px;background:${color};--dx:${dx}px;--dy:${dy}px;animation-duration:${0.4+Math.random()*0.4}s;animation-delay:${Math.random()*0.1}s;`;
     FX.appendChild(el);
-    setTimeout(()=>el.remove(),900);
+    setTimeout(()=>el.remove(),1900);
   }
 }
 
@@ -1978,7 +1988,7 @@ function fxWord(text,color='#fbbf24',size=32){
   el.style.cssText=`font-size:${size}px;color:${color};text-shadow:0 0 20px ${color};`;
   el.textContent=text;
   FX.appendChild(el);
-  setTimeout(()=>el.remove(),1000);
+  setTimeout(()=>el.remove(),2000);
 }
 
 function fxFlash(color){
@@ -1994,7 +2004,7 @@ function fxRing(x,y,color){
   el.className='fx-slam';
   el.style.cssText=`left:${x-30}px;top:${y-30}px;width:60px;height:60px;color:${color};`;
   FX.appendChild(el);
-  setTimeout(()=>el.remove(),600);
+  setTimeout(()=>el.remove(),2000);
 }
 
 // チャージ
@@ -2084,7 +2094,7 @@ function fxDirectAttack(p){
   el.style.cssText='background:radial-gradient(circle,rgba(220,38,38,.8),rgba(220,38,38,0));';
   el.innerHTML=`<div style="font-family:'Fredoka One',cursive;font-size:48px;color:#fff;text-shadow:0 0 30px #dc2626;text-align:center;">ダイレクトアタック！<br><span style="font-size:24px">🔥🔥🔥</span></div>`;
   FX.appendChild(el);
-  setTimeout(()=>el.remove(),1500);
+  setTimeout(()=>el.remove(),2500);
   fxParticles(window.innerWidth/2,window.innerHeight/2,'#dc2626',30,true);
   fxParticles(window.innerWidth/2,window.innerHeight/2,'#fbbf24',20,true);
 }
@@ -2140,12 +2150,14 @@ function cardHTML(card,zone,p){
   if(zone==='field'&&G._7selectMode&&G._7selectMode.active){
     click=`onclick="on7FieldTap(${card.id},${p})"`;
   }
+  const underline=(card.num===6||card.num===9)?'<div style="position:absolute;bottom:6px;left:50%;transform:translateX(-50%);width:10px;height:2px;background:currentColor;border-radius:1px;z-index:2;opacity:.9;"></div>':'';
+  const tlbar=(card.num===6||card.num===9)?'<span style="display:block;width:6px;height:1.5px;background:currentColor;border-radius:1px;margin-top:1px;"></span>':'';
   return `<div class="${cls.join(' ')}" ${click}
     oncontextmenu="showCinfo(event,${card.id});return false;">
     <div class="uno-oval"></div>
-    <span class="cn-tl">${card.num}</span>
-    <div class="cn">${card.num}</div>
-    <span class="cn-br">${card.num}</span>
+    <span class="cn-tl">${card.num}${tlbar}</span>
+    <div class="cn" style="position:relative">${card.num}${underline}</div>
+    <span class="cn-br">${card.num}${tlbar}</span>
   </div>`;
 }
 
