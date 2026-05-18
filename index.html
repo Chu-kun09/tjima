@@ -117,7 +117,7 @@ html,body{width:100%;height:100dvh;overflow:hidden;background:var(--bg);color:#e
 #modal-btns{display:flex;gap:6px;justify-content:center;flex-wrap:wrap;}
 
 /* ─ TOAST ─ */
-#toast{position:fixed;top:44%;left:50%;transform:translate(-50%,-50%);background:rgba(74,45,138,.97);color:#fff;font-family:'Fredoka One',cursive;font-size:16px;padding:11px 22px;border-radius:12px;z-index:999;display:none;text-align:center;max-width:82vw;pointer-events:none;}
+#toast{position:fixed;bottom:calc(var(--bar-h,80px) + 12px);left:50%;transform:translateX(-50%);background:rgba(74,45,138,.97);color:#fff;font-family:'Fredoka One',cursive;font-size:15px;padding:9px 18px;border-radius:12px;z-index:999;display:none;text-align:center;max-width:82vw;pointer-events:none;}
 
 /* ─ CARD INFO ─ */
 #cinfo{position:fixed;bottom:calc(var(--bar-h) + 8px);left:50%;transform:translateX(-50%);background:rgba(21,29,53,.98);border:1.5px solid #4a2d8a;border-radius:10px;padding:8px 14px;width:min(86vw,300px);font-size:11px;color:#bbb;z-index:300;display:none;text-align:center;pointer-events:none;}
@@ -252,7 +252,9 @@ window._fbResolve({ db, ref, set, get, onValue, update, remove });
 <div id="win-screen">
   <div id="win-title"></div>
   <div id="win-sub"></div>
-  <button class="btn p" style="font-size:17px;padding:12px 36px;margin-top:10px" onclick="retryGame()">もう一度</button>
+  <div id="win-room-info" style="font-size:12px;color:#888;margin-top:6px;"></div>
+  <button class="btn g" style="font-size:17px;padding:12px 36px;margin-top:10px" onclick="retryGame()">もう一度（同じルームで）</button>
+  <button class="btn n" style="font-size:13px;padding:8px 20px;margin-top:6px" onclick="location.reload()">タイトルに戻る</button>
 </div>
 
 <!-- フリーズ対策: 小さいリセットボタン -->
@@ -2127,13 +2129,21 @@ function showExTjiaChallenge(p){
   document.body.appendChild(overlay);
 }
 function winGame(p,reason){
-  if(G.gameOver)return; // 重複防止
+  if(G.gameOver)return;
   G.gameOver=true;
   G._winner=p;
   G._winReason=reason;
   pushState();
   document.getElementById('win-title').textContent=`🎉 P${p} の勝利！`;
   document.getElementById('win-sub').textContent=reason;
+  const ri=document.getElementById('win-room-info');
+  if(ri){
+    if(ONLINE.enabled&&ONLINE.roomId){
+      ri.textContent=`ROOM: ${ONLINE.roomId}　P${ONLINE.myPlayer}として参加中`;
+    }else{
+      ri.textContent='ローカル対戦';
+    }
+  }
   document.getElementById('win-screen').classList.add('show');
 }
 
@@ -2159,11 +2169,17 @@ function fxParticles(x,y,color,count=12,big=false){
 function fxWord(text,color='#fbbf24',size=32){
   const el=document.createElement('div');
   el.className='fx-word';
-  el.style.cssText=`font-size:${size}px;color:${color};text-shadow:0 0 20px ${color};`;
+  // 既存のfx-wordの数に応じてtopをずらす
+  // トーストは44%にあるので30%~38%の間に収める（複数は上にずらす）
+  const existing=FX.querySelectorAll('.fx-word').length;
+  const topPct=34 - existing*10; // 34%, 24%, 14%...（上方向へ）
+  el.style.cssText=`font-size:${size}px;color:${color};text-shadow:0 0 20px ${color};top:${Math.max(8,topPct)}%;`;
   el.textContent=text;
   FX.appendChild(el);
   setTimeout(()=>el.remove(),2000);
 }
+
+
 
 function fxFlash(color){
   const el=document.createElement('div');
@@ -2592,7 +2608,21 @@ setTimeout(adjustLayout,80);setTimeout(adjustLayout,400);
 // ═══════════════════════════════════
 function retryGame(){
   if(ONLINE.enabled&&ONLINE.roomId){
-    remove(ref(db,`rooms/${ONLINE.roomId}`)).finally(()=>location.reload());
+    const savedRoom=ONLINE.roomId;
+    const savedPlayer=ONLINE.myPlayer;
+    // ルームデータをリセットして同じルーム名で再戦
+    remove(ref(db,`rooms/${savedRoom}`)).then(()=>{
+      // win screenを隠す
+      document.getElementById('win-screen').classList.remove('show');
+      G.gameOver=false;
+      if(savedPlayer===1){
+        // P1は再度ルーム作成
+        createRoom(savedRoom);
+      }else{
+        // P2は再度参加待ち
+        joinRoomByName(savedRoom);
+      }
+    });
   }else{
     location.reload();
   }
@@ -2629,20 +2659,46 @@ function startOffline(){
 }
 
 function showOnlineMenu(){
-  showSimpleModal('オンライン対戦',[
-    {label:'ルームを作成（先攻）',cls:'g',fn:()=>{closeModal();createRoom();}},
-    {label:'ルームに参加（後攻）',cls:'b',fn:()=>{closeModal();joinRoomPrompt();}},
-    {label:'戻る',cls:'n',fn:closeModal},
-  ],'どちらですか？');
+  // ルーム名を入力して先攻/後攻を選択
+  document.getElementById('modal-title').textContent='オンライン対戦';
+  document.getElementById('modal-subtitle').textContent='ルーム名を入力（空欄で自動生成）';
+  document.getElementById('modal-list').innerHTML=`
+    <input id="room-name-input" type="text" placeholder="例: TJIMA"
+      style="width:100%;padding:12px;border-radius:10px;border:2px solid #4a2d8a;
+      background:#0e1225;color:#fff;font-size:20px;font-family:'Fredoka One',cursive;
+      text-align:center;letter-spacing:4px;text-transform:uppercase;margin:8px 0;"
+      maxlength="8" autocomplete="off" autocorrect="off" autocapitalize="characters" spellcheck="false">
+    <div style="font-size:11px;color:#6b7a99;text-align:center;margin-top:4px">
+      同じルーム名で先攻/後攻に分かれてください
+    </div>
+  `;
+  const btnsEl=document.getElementById('modal-btns');
+  btnsEl.innerHTML='';
+  function getRoomName(){
+    const raw=document.getElementById('room-name-input').value;
+    const clean=raw.replace(/[^a-zA-Z0-9]/g,'').toUpperCase().slice(0,8);
+    return clean||generateRoomId(); // 空欄なら自動生成
+  }
+  const p1btn=document.createElement('button');
+  p1btn.className='btn g';p1btn.textContent='先攻（P1）で作成';
+  p1btn.onclick=()=>{closeModal();createRoom(getRoomName());};
+  const p2btn=document.createElement('button');
+  p2btn.className='btn b';p2btn.textContent='後攻（P2）で参加';
+  p2btn.onclick=()=>{closeModal();joinRoomByName(getRoomName());};
+  const cancelBtn=document.createElement('button');
+  cancelBtn.className='btn n';cancelBtn.textContent='戻る';
+  cancelBtn.onclick=()=>{closeModal();showTitleScreen();};
+  btnsEl.appendChild(p1btn);btnsEl.appendChild(p2btn);btnsEl.appendChild(cancelBtn);
+  document.getElementById('modal-overlay').classList.add('show');
 }
 
 function generateRoomId(){
   return Math.random().toString(36).slice(2,7).toUpperCase();
 }
 
-async function createRoom(){
+async function createRoom(roomId){
   if(!db){await window._fbReady;}
-  const roomId=generateRoomId();
+  if(!roomId)roomId=generateRoomId();
   ONLINE.enabled=true;
   ONLINE.roomId=roomId;
   ONLINE.myPlayer=1;
@@ -2673,6 +2729,27 @@ async function createRoom(){
       phaseUntap();
     }
   });
+}
+
+async function joinRoomByName(roomId){
+  if(!roomId){toast('ルーム名を入力してください');return;}
+  if(!db){await window._fbReady;}
+  // ルームがなければ待機（先攻がまだ作成中の場合）
+  toast(`ルーム ${roomId} に参加中...`);
+  // 少し待ってからjoin試行（先攻が先に作成する時間を考慮）
+  let tries=0;
+  async function tryJoin(){
+    const hostSnap=await get(ref(db,`rooms/${roomId}/host`));
+    if(hostSnap.exists()){
+      await joinRoom(roomId);
+    }else if(tries<10){
+      tries++;
+      setTimeout(tryJoin,1000);
+    }else{
+      toast('ルームが見つかりません。先攻が先にルームを作成してください');
+    }
+  }
+  tryJoin();
 }
 
 function joinRoomPrompt(){
@@ -2726,6 +2803,7 @@ window.startOffline=startOffline;
 window.showOnlineMenu=showOnlineMenu;
 window.startGame=startGame;
 window.retryGame=retryGame;
+window.joinRoomByName=joinRoomByName;
 window.showGrave=showGrave;
 window.selectHandForCharge=selectHandForCharge;
 window.selectHandForSummon=selectHandForSummon;
