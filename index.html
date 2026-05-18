@@ -1777,7 +1777,7 @@ function doShieldBreakOnline(atk,p){
 function processST(){
   if(!G.pendingST.length)return;
   const st=G.pendingST[0];
-  showSimpleModal(`✨ STあり！`,[
+  showSimpleModal(`✨ ST: ${st.card.num===6?'退部':'片スパ'} 発動？`,[
     {label:'発動する！',cls:'g',fn:()=>{
       closeModal();
       activateST(st);G.pendingST.shift();
@@ -1807,7 +1807,7 @@ function processST(){
         }
       }
     }},
-  ],`シールドを確認してください`,st.player);
+  ],`${st.card.num===6?'退部（相手フィールドを1枚手札に戻す）':'片スパ（相手フィールドを全タップ）'}`,st.player);
 }
 function activateST(st){
   const pl=G.players[st.player];
