@@ -487,9 +487,9 @@ const EFF={
   3:'ブロッカー',
   4:'墓地送り時→自分のマナになる',
   5:'自分の召喚コスト-1（最低1）。0召喚時→墓地から1枚マナへ',
-  6:'シールドトリガー（シールドが割れたとき無料召喚）',
+  6:'退部（ST）: シールドが割れたとき無料召喚。相手のフィールドの1枚を手札に戻す',
   7:'ダブルブレイカー。召喚時→場の任意カード1枚を任意の場所へ移動',
-  8:'呪文（4マナ）：相手フィールドを全タップ。シールドトリガー対応',
+  8:'片スパ（ST）: 相手フィールドを全タップ（4マナ）。シールドトリガー対応',
   9:'ダブルブレイカー。マナチャージ時2マナ扱い・全色対応',
 };
 
@@ -730,8 +730,12 @@ function showTargetModal(atk,p){
   }
   if(atk.num===2)btns.push({label:'ヒラボン（手札捨て→破壊→攻撃）',cls:'y',fn:()=>{closeModal();showHirabonAttackDiscard(p);}});
   btns.push({label:'キャンセル',cls:'n',fn:()=>{closeModal();G.atkCard=null;phaseAttack();}});
-  const breaker=(atk.num===0)?'トリプル':(atk.num===7||atk.num===9)?'ダブル':'';
-  showSimpleModal(`${CJ[atk.color]}${atk.num}${breaker?'（'+breaker+'）':''}で攻撃`,btns,'攻撃対象を選択');
+  const breaker=(atk.num===0)?'🔱トリプル ':(atk.num===7||atk.num===9)?'⚔ダブル ':'⚔ ';
+  showSimpleModal(
+    `${breaker}${atkLabel(atk)} が攻撃！`,
+    btns,
+    '攻撃対象を選択'
+  );
 }
 
 // シールド0枚でのダイレクトアタック（ブロッカーがいれば防御側がブロック選択）
@@ -751,7 +755,7 @@ function execDirectWithBlock(atk,p,blockers){
       renderAll();
     }else{
       // ローカル: 防御側向けにモーダル表示
-      showSimpleModal('ブロックしますか？',[
+      showSimpleModal(`🛡 ${atkLabel(atk)} が攻撃！ ブロックしますか？`,[
         {label:'ブロックする',cls:'g',fn:()=>{closeModal();showBlockPicker(atk,p,blockers);}},
         {label:'ブロックしない → ダイレクト',cls:'r',fn:()=>{closeModal();execDirectAttack(atk,p);}},
       ],`ブロッカー: ${blockers.map(c=>CJ[c.color]+c.num).join(' / ')}`,opp);
@@ -794,7 +798,7 @@ function execShieldAttack(atk,p){
     // ローカル: 従来通り
     const blockers=G.players[opp].field.filter(c=>(c.num===1||c.num===3)&&!c.tapped&&(!c.linkedWith||c.linkRoot));
     if(blockers.length){
-      showSimpleModal(`ブロックしますか？`,[
+      showSimpleModal(`🛡 ${atkLabel(atk)} が攻撃！ ブロックしますか？`,[
         {label:'ブロックする',cls:'g',fn:()=>{closeModal();showBlockPicker(atk,p,blockers);}},
         {label:'ブロックしない',cls:'r',fn:()=>{closeModal();doShieldBreak(atk,p);}},
       ],`ブロッカー: ${blockers.map(c=>CJ[c.color]+c.num).join(' / ')}`,opp);
@@ -806,7 +810,7 @@ function execShieldAttack(atk,p){
 
 function showBlockPicker(atk,p,blockers){
   const opp=p===1?2:1;
-  showCardPicker(`ブロッカーを選択`,'選択して決定を押す',blockers,opp,false,
+  showCardPicker(`🛡 ブロッカーを選択 (${atkLabel(atk)}が攻撃)`,'選択して決定を押す',blockers,opp,false,
     (blocker)=>{
       closeModal();
       fxBlock(atk,p,blocker,opp);
@@ -900,9 +904,9 @@ function execCreatureAttack(atk,target,p){
   if(atk.linkedWith)atk.linkedWith.tapped=true;
   G.atkCard=null;
   const a=getAtkPower(atk), d=getAtkPower(target);
-  const atkName=atk.linkedWith?`${CJ[atk.color]}${atk.num}+${CJ[atk.linkedWith.color]}${atk.linkedWith.num}(ATK:${a})`:`${CJ[atk.color]}${atk.num}`;
-  const defName=target.linkedWith?`${CJ[target.color]}${target.num}+${CJ[target.linkedWith.color]}${target.linkedWith.num}(ATK:${d})`:`${CJ[target.color]}${target.num}`;
-  toast(`バトル: ${atkName} vs ${defName}`);
+  const atkName=atkLabel(atk);
+  const defName=atkLabel(target);
+  toast(`⚔ バトル: ${atkName} vs ${defName}`);
   pushState();
   if(a>=d){
     // targetを破壊
@@ -974,7 +978,7 @@ function showHirabonAttackDiscard(p){
     (card)=>{
       closeModal();
       G.players[p].hand=G.players[p].hand.filter(c=>c.id!==card.id);
-      G.players[p].graveyard.push(card);
+      sendToGrave(p,card);
       fxEffect(p,'ヒラボン！');
       toast(`${CJ[card.color]}${card.num}を捨ててヒラボン発動！`);
       // 数字宣言
@@ -1033,9 +1037,9 @@ function completeSummon(p,card){
     const opp=p===1?2:1;
     G.players[opp].field.forEach(c=>c.tapped=true);
     pl.hand=pl.hand.filter(c=>c.id!==card.id);
-    pl.graveyard.push(card);
+    sendToGrave(p,card);
     fxSpell(p);
-    toast('呪文発動！ 相手フィールドを全タップ');
+    toast('⚡ 片スパ発動！ 相手フィールドを全タップ');
     renderAll();return;
   }
   pl.hand=pl.hand.filter(c=>c.id!==card.id);
@@ -1286,7 +1290,7 @@ function restoreCard(card,op,zone){
   card._faceDown=false;
   if(zone==='hand')G.players[op].hand.push(card);
   else if(zone==='mana')G.players[op].mana.push(card);
-  else if(zone==='grave')G.players[op].graveyard.push(card);
+  else if(zone==='grave')sendToGrave(op,card);
   else if(zone==='field'){card.tapped=false;G.players[op].field.push(card);}
   else if(zone==='shield'){
     // 空きシールドスロットに戻す
@@ -1405,7 +1409,7 @@ function breakShield(targetP,sc){
         processST();
       }else{
         // 攻撃側: トーストで待機、pushStateして防御側が操作するのを待つ
-        toast('シールドを破壊！ 相手が確認中...');
+        toast(`💥 シールドを破壊！ 相手が確認中...`);
         // 防御側がST処理後にpushStateする → subscribeで受信して攻撃フェーズ継続
         setBar('相手がシールドを確認中...',[]);
       }
@@ -1425,7 +1429,7 @@ function breakShield(targetP,sc){
         ],'シールドが手札に加わりました',targetP);
       }else{
         // 攻撃側: 待機
-        toast('シールドを破壊！ 相手が確認中...');
+        toast(`💥 シールドを破壊！ 相手が確認中...`);
         setBar('相手がシールドを確認中...',[]);
       }
     }
@@ -1467,7 +1471,7 @@ function handleOnlinePhase(phase, myP){
       const atkCard=G.players[p]&&G.players[p].field.find(c=>c.id==atk.atkId);
       const blockers=G.players[opp].field.filter(c=>(c.num===1||c.num===3)&&!c.tapped&&(!c.linkedWith||c.linkRoot));
       if(blockers.length){
-        showSimpleModal('ブロックしますか？',[
+        showSimpleModal(`🛡 ブロックしますか？`,[
           {label:'ブロックする',cls:'g',fn:()=>{
             closeModal();
             // ブロッカー選択
@@ -1696,7 +1700,7 @@ function doShieldBreakOnline(atk,p){
 function processST(){
   if(!G.pendingST.length)return;
   const st=G.pendingST[0];
-  showSimpleModal(`シールドトリガー！`,[
+  showSimpleModal(`✨ STあり！`,[
     {label:'発動する！',cls:'g',fn:()=>{
       closeModal();
       activateST(st);G.pendingST.shift();
@@ -1726,16 +1730,16 @@ function processST(){
         }
       }
     }},
-  ],`シールドトリガーを持っています（${CJ[st.card.color]}${st.card.num}）`,st.player);
+  ],`シールドを確認してください`,st.player);
 }
 function activateST(st){
   const pl=G.players[st.player];
   if(st.card.num===8){
     const opp=st.player===1?2:1;
     G.players[opp].field.forEach(c=>c.tapped=true);
-    pl.graveyard.push(st.card);
+    sendToGrave(st.player,st.card);
     fxSpell(st.player);
-    toast(`ST呪文！ P${opp}フィールドを全タップ`);
+    toast(`⚡ ST片スパ！ P${opp}フィールドを全タップ`);
     renderAll();
     // オンライン: 8の効果（全タップ）を攻撃側に反映
     if(ONLINE.enabled){pushState();}
@@ -1744,7 +1748,7 @@ function activateST(st){
   st.card.tapped=false;st.card.summonedThisTurn=false;
   pl.field.push(st.card);
   fxSummon(st.player,st.card);
-  toast(`ST発動！ ${CJ[st.card.color]}${st.card.num}が場に`);
+  toast(`✨ ST発動！ ${CJ[st.card.color]}${st.card.num}が場に`);
   renderAll();
   if(st.card.num===2){showHirabonDeclareModal(st.player,false,null);return;}
   if(st.card.num===6){
@@ -1772,8 +1776,9 @@ function show6BounceModal(p){
       card.linkRoot=false; card.tapped=false;
       G.players[opp].field=G.players[opp].field.filter(c=>c.id!==card.id);
       G.players[opp].hand.push(card);
-      fxEffect(p,`バウンス！`);
-      toast(`${CJ[card.color]}${card.num}をP${opp}の手札に戻した`);
+      fxEffect(p,'👋 退部！');
+      fxEffect(opp,'👋 退部された！');
+      toast(`👋 退部！ ${CJ[card.color]}${card.num}をP${opp}の手札に戻した`);
       renderAll();
       if(ONLINE.enabled&&G.phase==='attack'){
         // STとして発動した6: 攻撃継続フェーズへ
@@ -1803,6 +1808,13 @@ function canAttack(p,card){
   if(card.linkedWith&&!card.linkRoot)return false;
   return!card.tapped&&(!card.summonedThisTurn||card.speedAttacker);
 }
+// 攻撃カードの表示名（ATK値は含まない）
+function atkLabel(atk){
+  if(atk.linkedWith&&atk.linkRoot){
+    return `${CJ[atk.color]}${atk.num}・${CJ[atk.linkedWith.color]}${atk.linkedWith.num}`;
+  }
+  return `${CJ[atk.color]}${atk.num}`;
+}
 // カードの攻撃力を返す（表示には使わず処理のみ）
 function getAtkPower(card){
   if(card.linkedWith&&card.linkRoot){
@@ -1819,7 +1831,7 @@ function getAtkPower(card){
 function destroyByNum(p,num){
   const pl=G.players[p];
   pl.field.filter(c=>c.num===num).forEach(c=>{pl.field=pl.field.filter(x=>x.id!==c.id);sendToGrave(p,c);});
-  pl.mana.filter(c=>c.num===num).forEach(c=>{pl.mana=pl.mana.filter(x=>x.id!==c.id);pl.graveyard.push(c);});
+  pl.mana.filter(c=>c.num===num).forEach(c=>{pl.mana=pl.mana.filter(x=>x.id!==c.id);sendToGrave(p,c);});
 }
 function sendToGrave(p,card){
   if(card.num===4){card.tapped=false;G.players[p].mana.push(card);toast(`${CJ[card.color]}4の効果: マナへ`);}
@@ -1942,9 +1954,16 @@ function fxDraw(p,card){
 // スペル
 function fxSpell(p){
   fxFlash('rgba(29,78,216,0.35)');
-  fxWord('呪文発動！','#93c5fd',30);
-  const cx=window.innerWidth/2,cy=window.innerHeight/2;
-  fxParticles(cx,cy,'#93c5fd',18);
+  fxWord('⚡ 片スパ！','#93c5fd',30);
+  const opp=p===1?2:1;
+  const cx=window.innerWidth/2;
+  // 自分側: 発動エフェクト
+  fxParticles(cx,window.innerHeight*(p===1?0.65:0.35),'#93c5fd',18);
+  // 相手フィールド側: 全タップエフェクト
+  setTimeout(()=>{
+    fxParticles(cx,window.innerHeight*(opp===1?0.65:0.35),'#60a5fa',14,true);
+    fxWord('全タップ！','#60a5fa',22);
+  },400);
 }
 
 // 攻撃
@@ -1998,6 +2017,7 @@ function fxHirabon(p,num){
   fxFlash('rgba(194,65,12,0.4)');
   fxWord(`💥 ヒラボン！ ${num}を全破壊`,'#fb923c',28);
   fxParticles(window.innerWidth/2,window.innerHeight/2,'#fb923c',20,true);
+  fxParticles(window.innerWidth/2,window.innerHeight*(p===1?0.35:0.65),'#ef4444',14,true);
 }
 
 // エクTジア
