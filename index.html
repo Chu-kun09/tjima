@@ -280,13 +280,19 @@ let ONLINE = {
 
 // ─ DBへ状態をプッシュ（自分のターンの操作後に呼ぶ）─
 let _pushSeq = 0;
-function pushState() {
+let _pendingFx = null; // 次のpushで一緒に送るエフェクト情報
+
+function pushState(fx=null) {
   if (!ONLINE.enabled || !ONLINE.roomId || !db) return;
   const snap = serializeG();
   snap._seq = ++_pushSeq;
-  snap._pusher = ONLINE.myPlayer; // 誰がpushしたか記録
+  snap._pusher = ONLINE.myPlayer;
+  if(fx||_pendingFx){ snap._fx = fx||_pendingFx; _pendingFx=null; }
   set(ref(db, `rooms/${ONLINE.roomId}/state`), snap).catch(e => console.error('pushState', e));
 }
+
+// エフェクトをキューに積んで次のpushで送る
+function queueFx(type, data={}){ _pendingFx={type,...data}; }
 
 // ─ シリアライズ: FirebaseのJSON制限を回避 ─
 // Firebase は null 値と配列インデックスを削除するため
@@ -421,12 +427,15 @@ function subscribeRoom(roomId) {
         'shield-confirm': pusher===myP && iAmAtt,  // 攻撃側が自分でpushしたshield-confirmはスキップ
         'attack-continue':pusher===myP && iAmDef,  // 防御側が自分でpushしたattack-continueはスキップ
         'direct-attack':  false,  // 双方が受け取る
+        'creature-attack': pusher===myP && iAmAtt, // 攻撃側自身はスキップ
       };
       if(skipPhases[phase]){return;}
 
+      const rxFx1 = data._fx || null;
       deserializeG(data);
       renderAll();
       adjustLayout();
+      if(rxFx1 && pusher !== myP){ playRemoteFx(rxFx1, pusher); }
       if(G.gameOver){showWinScreen();return;}
       handleOnlinePhase(phase, myP);
       return;
@@ -436,9 +445,12 @@ function subscribeRoom(roomId) {
     // 自分がpushしたデータはスキップ（ローカルで既に反映済み）
     if(pusher === myP){return;}
 
+    const rxFx2 = data._fx || null;
     deserializeG(data);
     renderAll();
     adjustLayout();
+    if(rxFx2 && pusher !== myP){ playRemoteFx(rxFx2, pusher); }
+    if(G.gameOver){showWinScreen();return;}
 
     if(G.gameOver){showWinScreen();return;}
 
@@ -450,6 +462,45 @@ function subscribeRoom(roomId) {
     }
   });
   ONLINE.unsubscribe = () => unsub();
+}
+
+
+// ── リモートエフェクト再生 ──
+function playRemoteFx(fx, pusherP){
+  if(!fx) return;
+  const opp=parseInt(pusherP);
+  switch(fx.type){
+    case 'attack':
+      fxWord(`⚔ ${fx.label||''}が攻撃！`,'#f87171',24);
+      fxParticles(window.innerWidth/2,window.innerHeight/2,'#f87171',10);
+      break;
+    case 'block':
+      fxFlash('rgba(22,163,74,0.3)');
+      fxWord('🛡 ブロック！','#4ade80',24);
+      break;
+    case 'shield-break':
+      fxShieldBreak(opp===1?2:1, !!fx.isTriple);
+      break;
+    case 'summon':
+      fxWord(`召喚！ ${fx.label||''}`,fx.color||'#a5b4fc',22);
+      break;
+    case 'hirabon':
+      fxHirabon(opp, fx.num||0);
+      break;
+    case 'spell':
+      fxSpell(opp);
+      break;
+    case 'bounce':
+      fxWord('👋 退部！','#c4b5fd',26);
+      fxParticles(window.innerWidth/2,window.innerHeight/2,'#c4b5fd',12);
+      break;
+    case 'direct':
+      fxDirectAttack(opp);
+      break;
+    case 'link':
+      fxWord(fx.label||'リンク！','#fbbf24',26);
+      break;
+  }
 }
 
 function showWinScreen(){
@@ -791,7 +842,7 @@ function execShieldAttack(atk,p){
     atk.tapped=true;
     if(atk.linkedWith)atk.linkedWith.tapped=true;
     G.atkCard=null;
-    pushState();
+    pushState({type:'attack', label:atkLabel(atk)});
     setBar('相手がブロックを検討中...',[]);
     renderAll();
   }else{
@@ -888,11 +939,25 @@ function tripleMore(opp,p,rem,done){
 
 function showCreaturePicker(atk,p){
   const opp=p===1?2:1;
-  // タップ済み（リンクはroot側のみ選択肢に出す）
   const targets=G.players[opp].field.filter(c=>c.tapped&&(!c.linkedWith||c.linkRoot));
   if(!targets.length){toast('タップ済みナンバーズがいません');return;}
-  showCardPicker('攻撃対象を選択','タップ済みナンバーズ',targets,opp,false,
-    (card)=>{closeModal();fxAttack(atk,p,card,opp);setTimeout(()=>execCreatureAttack(atk,card,p),500);},
+  showCardPicker(`⚔ ${atkLabel(atk)} が攻撃！`,'タップ済みナンバーズを選択',targets,opp,false,
+    (card)=>{
+      closeModal();
+      if(ONLINE.enabled){
+        atk.tapped=true;
+        if(atk.linkedWith)atk.linkedWith.tapped=true;
+        G.atkCard=null;
+        G._pendingCreatureAtk={atkId:parseInt(atk.id),targetId:parseInt(card.id),attPlayer:parseInt(p)};
+        G.onlinePhase='creature-attack';
+        pushState({type:'attack',label:atkLabel(atk)});
+        fxAttack(atk,p,card,opp);
+        setTimeout(()=>execCreatureAttack(atk,card,p),500);
+      }else{
+        fxAttack(atk,p,card,opp);
+        setTimeout(()=>execCreatureAttack(atk,card,p),500);
+      }
+    },
     [{label:'キャンセル',cls:'n',fn:()=>{closeModal();G.atkCard=null;phaseAttack();}}]
   );
 }
@@ -927,8 +992,10 @@ function execCreatureAttack(atk,target,p){
       sendToGrave(p,atk);
     }
   }
+  G.onlinePhase=null;
+  G._pendingCreatureAtk=null;
+  if(ONLINE.enabled) pushState();
   renderAll();
-  // 攻撃後に攻撃フェーズを継続（さらに攻撃できる）
   setTimeout(()=>{if(G.phase==='attack')phaseAttack();},300);
 }
 
@@ -1048,7 +1115,7 @@ function completeSummon(p,card){
   if(hasLink34)card.speedAttacker=true;
   pl.field.push(card);
   fxSummon(p,card);
-  pushState();
+  pushState({type:'summon', label:CJ[card.color]+card.num, color:COL_HEX[card.color]});
   renderAll();
   if(card.num===2){showHirabonDeclareModal(p,false,null);return;}
   if(card.num===6){show6BounceModal(p);return;}
@@ -1386,12 +1453,16 @@ function doLink(a,b,p){
   // 小さい番号側をrootとして攻撃/タップを代表させる
   if(a.num<=b.num){a.linkRoot=true;b.linkRoot=false;}
   else{b.linkRoot=true;a.linkRoot=false;}
+  let linkLabel='';
   if((a.num===3&&b.num===4)||(a.num===4&&b.num===3)){
     G.players[p].field.forEach(c=>c.speedAttacker=true);
     fxEffect(p,'リンク3+4！ スピードアタッカー！');
+    linkLabel='リンク3+4！';
   }else{
     fxEffect(p,'リンク5+5！');
+    linkLabel='リンク5+5！';
   }
+  if(ONLINE.enabled) pushState({type:'link', label:linkLabel});
   renderAll();
   setTimeout(()=>{if(G.phase==='summon')phaseSummon();},400);
 }
@@ -1481,7 +1552,7 @@ function handleOnlinePhase(phase, myP){
                 // ブロック先をGに記録してpush
                 G.onlinePhase='block-resolve';
                 G._blockerId=blocker.id;
-                pushState();
+                pushState({type:'block'});
                 renderAll();
               },
               [{label:'ブロックしない',cls:'r',fn:()=>{
@@ -1611,6 +1682,12 @@ function handleOnlinePhase(phase, myP){
       setBar('相手がシールドを確認中...',[]);
     }
   }
+  else if(phase==='creature-attack'){
+    // 防御側: エフェクト受信＋場の更新（handleOnlinePhaseはdeserializeG後に呼ばれるのでrenderAll済み）
+    // 攻撃側(pusher)は既にローカルで実行済みなのでスキップ
+    // 何もしない（エフェクトはplayRemoteFxで処理済み）
+    return;
+  }
   else if(phase==='attack-continue'){
     // 攻撃側: 攻撃継続
     const p=G.turn;
@@ -1694,7 +1771,7 @@ function doShieldBreakOnline(atk,p){
   }
 
   G.onlinePhase='shield-confirm';
-  pushState();
+  pushState({type:'shield-break', isTriple:isTriple});
   renderAll();
 }
 function processST(){
@@ -1709,7 +1786,7 @@ function processST(){
       }else{
         if(ONLINE.enabled){
           G.onlinePhase='attack-continue';G._pendingAtk=null;
-          pushState();renderAll();
+          pushState({type:'bounce'});renderAll();
         }else{
           if(G.phase==='attack')setTimeout(phaseAttack,300);
         }
@@ -1724,7 +1801,7 @@ function processST(){
       }else{
         if(ONLINE.enabled){
           G.onlinePhase='attack-continue';G._pendingAtk=null;
-          pushState();renderAll();
+          pushState({type:'bounce'});renderAll();
         }else{
           renderAll();if(G.phase==='attack')setTimeout(phaseAttack,300);
         }
