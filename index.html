@@ -2040,14 +2040,14 @@ function showExTjiaChallenge(p){
 
   const title=document.createElement('div');
   title.style.cssText='font-family:"Fredoka One",cursive;font-size:22px;color:#fbbf24;text-align:center;text-shadow:0 0 16px #fbbf24;';
-  title.textContent='⭐ エクTジア！ 青→緑→黄→赤 の順でタップ！';
+  title.textContent='⭐ エクTジア！ 正しい順番で4枚タップ！';
 
   const hint=document.createElement('div');
   hint.style.cssText='font-size:13px;color:#aaa;text-align:center;';
   hint.textContent='残り4枚';
 
   const grid=document.createElement('div');
-  grid.style.cssText='display:grid;grid-template-columns:1fr 1fr;gap:16px;padding:10px;';
+  grid.style.cssText='display:flex;flex-direction:row;gap:12px;padding:10px;justify-content:center;';
 
   const colorName={red:'赤',blue:'青',green:'緑',yellow:'黄'};
   const bgColor={red:'#e63c1e',blue:'#0065b3',green:'#3d9e2c',yellow:'#fcd205'};
@@ -2056,7 +2056,7 @@ function showExTjiaChallenge(p){
   displayed.forEach(color=>{
     const card=document.createElement('div');
     card.dataset.color=color;
-    card.style.cssText=`width:80px;height:112px;border-radius:10px;background:${bgColor[color]};
+    card.style.cssText=`width:70px;height:98px;border-radius:10px;background:${bgColor[color]};
       border:3px solid white;display:flex;flex-direction:column;align-items:center;
       justify-content:center;cursor:pointer;box-shadow:0 4px 12px rgba(0,0,0,.5);
       font-family:"Fredoka One",cursive;position:relative;overflow:hidden;`;
@@ -2065,7 +2065,7 @@ function showExTjiaChallenge(p){
     const oval=document.createElement('div');
     oval.style.cssText='position:absolute;width:90%;height:75%;background:rgba(0,0,0,.2);border-radius:50%;transform:rotate(30deg);';
     const num=document.createElement('div');
-    num.style.cssText=`font-size:48px;color:${textColor[color]};position:relative;z-index:1;
+    num.style.cssText=`font-size:40px;color:${textColor[color]};position:relative;z-index:1;
       text-shadow:-2px -2px 0 #000,2px -2px 0 #000,-2px 2px 0 #000,2px 2px 0 #000;`;
     num.textContent='0';
     const lbl=document.createElement('div');
