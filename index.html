@@ -2631,28 +2631,61 @@ function retryGame(){
 }
 
 function showRetryMenu(savedRoom){
+  // 再戦: プレイヤー名入力 → 先攻後攻選択
   document.getElementById('modal-title').textContent='再戦！';
-  document.getElementById('modal-subtitle').textContent=`ROOM: ${savedRoom}`;
-  document.getElementById('modal-list').innerHTML='';
+  document.getElementById('modal-subtitle').textContent=`ROOM: ${savedRoom}　名前を入力（空欄で前回の名前）`;
+  document.getElementById('modal-list').innerHTML=`
+    <input id="retry-name-input" type="text" placeholder="プレイヤー名"
+      style="width:100%;padding:12px;border-radius:10px;border:2px solid #4a2d8a;
+      background:#0e1225;color:#fff;font-size:18px;font-family:'Nunito',sans-serif;
+      text-align:center;margin:8px 0;"
+      maxlength="10" autocomplete="off" spellcheck="false">
+  `;
   const btnsEl=document.getElementById('modal-btns');
   btnsEl.innerHTML='';
-  const p1btn=document.createElement('button');
-  p1btn.className='btn g';p1btn.textContent='先攻（P1）でプレイ';
-  p1btn.onclick=()=>{
-    ONLINE.myPlayer=1;
-    closeModal();createRoom(savedRoom);
-  };
-  const p2btn=document.createElement('button');
-  p2btn.className='btn b';p2btn.textContent='後攻（P2）でプレイ';
-  p2btn.onclick=()=>{
-    ONLINE.myPlayer=2;
-    closeModal();joinRoomByName(savedRoom);
+  const nextBtn=document.createElement('button');
+  nextBtn.className='btn g';nextBtn.textContent='次へ ▶';
+  nextBtn.onclick=()=>{
+    const name=document.getElementById('retry-name-input').value.trim().slice(0,10)||null;
+    showRetryRoleSelect(savedRoom, name);
   };
   const backBtn=document.createElement('button');
   backBtn.className='btn n';backBtn.textContent='タイトルに戻る';
   backBtn.onclick=()=>{closeModal();location.reload();};
-  btnsEl.appendChild(p1btn);btnsEl.appendChild(p2btn);btnsEl.appendChild(backBtn);
+  btnsEl.appendChild(nextBtn);btnsEl.appendChild(backBtn);
   document.getElementById('modal-overlay').classList.add('show');
+}
+
+function showRetryRoleSelect(savedRoom, playerName){
+  document.getElementById('modal-title').textContent='先攻 / 後攻';
+  document.getElementById('modal-subtitle').textContent=`ROOM: ${savedRoom}`;
+  document.getElementById('modal-list').innerHTML=`
+    <div style="font-size:12px;color:#7c8faa;text-align:center;padding:4px 0">
+      ${playerName?`名前: ${playerName}`:'前回の名前を継続'}
+    </div>
+  `;
+  const btnsEl=document.getElementById('modal-btns');
+  btnsEl.innerHTML='';
+  const p1btn=document.createElement('button');
+  p1btn.className='btn g';p1btn.style.fontSize='15px';p1btn.style.padding='10px 18px';
+  p1btn.textContent='⚔ 先攻（P1）';
+  p1btn.onclick=()=>{
+    if(playerName) ONLINE.names[1]=playerName;
+    ONLINE.myPlayer=1;
+    closeModal();createRoom(savedRoom);
+  };
+  const p2btn=document.createElement('button');
+  p2btn.className='btn b';p2btn.style.fontSize='15px';p2btn.style.padding='10px 18px';
+  p2btn.textContent='🛡 後攻（P2）';
+  p2btn.onclick=()=>{
+    if(playerName) ONLINE.names[2]=playerName;
+    ONLINE.myPlayer=2;
+    closeModal();joinRoomByName(savedRoom);
+  };
+  const backBtn=document.createElement('button');
+  backBtn.className='btn n';backBtn.textContent='◀ 戻る';
+  backBtn.onclick=()=>{showRetryMenu(savedRoom);};
+  btnsEl.appendChild(p1btn);btnsEl.appendChild(p2btn);btnsEl.appendChild(backBtn);
 }
 // フリーズ対策: モーダルを閉じてターン状態をリセット
 function emergencyReset(){
@@ -2686,54 +2719,89 @@ function startOffline(){
 }
 
 function showOnlineMenu(){
+  // Step1: ルーム名入力
   document.getElementById('modal-title').textContent='オンライン対戦';
-  document.getElementById('modal-subtitle').textContent='ルーム名とプレイヤー名を入力してください';
+  document.getElementById('modal-subtitle').textContent='Step 1: ルーム名を入力（空欄で自動生成）';
   document.getElementById('modal-list').innerHTML=`
-    <div style="font-size:11px;color:#6b7a99;margin-bottom:4px">ルーム名（空欄で自動生成）</div>
     <input id="room-name-input" type="text" placeholder="例: TJIMA"
-      style="width:100%;padding:10px;border-radius:8px;border:2px solid #4a2d8a;
-      background:#0e1225;color:#fff;font-size:18px;font-family:'Fredoka One',cursive;
-      text-align:center;letter-spacing:3px;text-transform:uppercase;margin-bottom:10px;"
+      style="width:100%;padding:12px;border-radius:10px;border:2px solid #4a2d8a;
+      background:#0e1225;color:#fff;font-size:22px;font-family:'Fredoka One',cursive;
+      text-align:center;letter-spacing:4px;text-transform:uppercase;margin:8px 0;"
       maxlength="8" autocomplete="off" autocorrect="off" autocapitalize="characters" spellcheck="false">
-    <div style="font-size:11px;color:#6b7a99;margin-bottom:4px">プレイヤー名（空欄でP1/P2）</div>
-    <input id="player-name-input" type="text" placeholder="例: たろう"
-      style="width:100%;padding:10px;border-radius:8px;border:2px solid #4a2d8a;
-      background:#0e1225;color:#fff;font-size:16px;font-family:'Nunito',sans-serif;
-      text-align:center;margin-bottom:6px;"
-      maxlength="10" autocomplete="off" spellcheck="false">
     <div style="font-size:10px;color:#6b7a99;text-align:center">
-      同じルーム名で片方が先攻・片方が後攻を選んでください
+      対戦相手と同じルーム名を入力してください
     </div>
   `;
   const btnsEl=document.getElementById('modal-btns');
   btnsEl.innerHTML='';
-  function getRoomName(){
+  const nextBtn=document.createElement('button');
+  nextBtn.className='btn g';nextBtn.textContent='次へ ▶';
+  nextBtn.onclick=()=>{
     const raw=document.getElementById('room-name-input').value;
-    const clean=raw.replace(/[^a-zA-Z0-9]/g,'').toUpperCase().slice(0,8);
-    return clean||generateRoomId();
-  }
-  function getPlayerName(){
-    return document.getElementById('player-name-input').value.trim().slice(0,10)||null;
-  }
-  const p1btn=document.createElement('button');
-  p1btn.className='btn g';p1btn.textContent='先攻（P1）で作成';
-  p1btn.onclick=()=>{
-    const name=getPlayerName();
-    if(name) ONLINE.names[1]=name;
-    closeModal();createRoom(getRoomName());
-  };
-  const p2btn=document.createElement('button');
-  p2btn.className='btn b';p2btn.textContent='後攻（P2）で参加';
-  p2btn.onclick=()=>{
-    const name=getPlayerName();
-    if(name) ONLINE.names[2]=name;
-    closeModal();joinRoomByName(getRoomName());
+    const roomId=raw.replace(/[^a-zA-Z0-9]/g,'').toUpperCase().slice(0,8)||generateRoomId();
+    showPlayerNameInput(roomId);
   };
   const cancelBtn=document.createElement('button');
   cancelBtn.className='btn n';cancelBtn.textContent='戻る';
   cancelBtn.onclick=()=>{closeModal();showTitleScreen();};
-  btnsEl.appendChild(p1btn);btnsEl.appendChild(p2btn);btnsEl.appendChild(cancelBtn);
+  btnsEl.appendChild(nextBtn);btnsEl.appendChild(cancelBtn);
   document.getElementById('modal-overlay').classList.add('show');
+}
+
+function showPlayerNameInput(roomId){
+  // Step2: プレイヤー名入力
+  document.getElementById('modal-title').textContent='プレイヤー名';
+  document.getElementById('modal-subtitle').textContent='Step 2: 名前を入力（空欄でP1/P2）';
+  document.getElementById('modal-list').innerHTML=`
+    <input id="player-name-input" type="text" placeholder="例: たろう"
+      style="width:100%;padding:12px;border-radius:10px;border:2px solid #4a2d8a;
+      background:#0e1225;color:#fff;font-size:20px;font-family:'Nunito',sans-serif;
+      text-align:center;margin:8px 0;"
+      maxlength="10" autocomplete="off" spellcheck="false">
+  `;
+  const btnsEl=document.getElementById('modal-btns');
+  btnsEl.innerHTML='';
+  const nextBtn=document.createElement('button');
+  nextBtn.className='btn g';nextBtn.textContent='次へ ▶';
+  nextBtn.onclick=()=>{
+    const name=document.getElementById('player-name-input').value.trim().slice(0,10)||null;
+    showRoleSelect(roomId, name);
+  };
+  const backBtn=document.createElement('button');
+  backBtn.className='btn n';backBtn.textContent='◀ 戻る';
+  backBtn.onclick=()=>{showOnlineMenu();};
+  btnsEl.appendChild(nextBtn);btnsEl.appendChild(backBtn);
+}
+
+function showRoleSelect(roomId, playerName){
+  // Step3: 先攻/後攻選択
+  document.getElementById('modal-title').textContent='先攻 / 後攻';
+  document.getElementById('modal-subtitle').textContent=`Step 3: ROOM「${roomId}」での役割を選択`;
+  document.getElementById('modal-list').innerHTML=`
+    <div style="font-size:12px;color:#7c8faa;text-align:center;padding:4px 0">
+      ${playerName?`名前: ${playerName}`:'名前: なし（P1/P2）'}
+    </div>
+  `;
+  const btnsEl=document.getElementById('modal-btns');
+  btnsEl.innerHTML='';
+  const p1btn=document.createElement('button');
+  p1btn.className='btn g';p1btn.style.fontSize='15px';p1btn.style.padding='10px 18px';
+  p1btn.textContent='⚔ 先攻（P1）で作成';
+  p1btn.onclick=()=>{
+    if(playerName) ONLINE.names[1]=playerName;
+    closeModal();createRoom(roomId);
+  };
+  const p2btn=document.createElement('button');
+  p2btn.className='btn b';p2btn.style.fontSize='15px';p2btn.style.padding='10px 18px';
+  p2btn.textContent='🛡 後攻（P2）で参加';
+  p2btn.onclick=()=>{
+    if(playerName) ONLINE.names[2]=playerName;
+    closeModal();joinRoomByName(roomId);
+  };
+  const backBtn=document.createElement('button');
+  backBtn.className='btn n';backBtn.textContent='◀ 戻る';
+  backBtn.onclick=()=>{showPlayerNameInput(roomId);};
+  btnsEl.appendChild(p1btn);btnsEl.appendChild(p2btn);btnsEl.appendChild(backBtn);
 }
 
 function generateRoomId(){
