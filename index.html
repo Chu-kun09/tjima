@@ -1359,17 +1359,35 @@ function on7FieldTap(cardId,cardOwner){
 function show7DestModal(p,card,origOwner,origZone){
   const isFaceDown=!!card._faceDown;
   const label=isFaceDown?'（裏向き）':`${CJ[card.color]}${card.num}`;
-  // 移動先は自分(p)のゾーンのみ
-  const btns=[
-    {label:'自分の手札',cls:'b',fn:()=>{closeModal();exec7Move(p,card,origOwner,'hand',p);}},
-    {label:'自分のマナ',cls:'g',fn:()=>{closeModal();exec7Move(p,card,origOwner,'mana',p);}},
-    {label:'自分のフィールド',cls:'o',fn:()=>{closeModal();exec7Move(p,card,origOwner,'field',p);}},
-    {label:'自分のシールド（裏）',cls:'p',fn:()=>{closeModal();exec7Move(p,card,origOwner,'shield',p);}},
-    {label:'自分のデッキ上（裏）',cls:'p',fn:()=>{closeModal();exec7Move(p,card,origOwner,'deck',p);}},
-    {label:'墓地',cls:'r',fn:()=>{closeModal();exec7Move(p,card,origOwner,'grave',origOwner);}},
-    {label:'キャンセル',cls:'n',fn:()=>{closeModal();restoreCard(card,origOwner,origZone);show7PickModal(p);}},
-  ];
-  showSimpleModal(`${label} の移動先`,btns,'移動先を選択（自分のゾーンのみ）',p);
+  const isOppCard=(origOwner!==p); // 相手のカードかどうか
+
+  let btns;
+  const opp=p===1?2:1;
+  if(isOppCard){
+    // 相手のカード: 相手の場のどこでも移動可（自分の場には移動不可）
+    btns=[
+      {label:'相手の手札',cls:'b',fn:()=>{closeModal();exec7Move(p,card,origOwner,'hand',opp);}},
+      {label:'相手のマナ',cls:'g',fn:()=>{closeModal();exec7Move(p,card,origOwner,'mana',opp);}},
+      {label:'相手のフィールド',cls:'o',fn:()=>{closeModal();exec7Move(p,card,origOwner,'field',opp);}},
+      {label:'相手のシールド（裏）',cls:'p',fn:()=>{closeModal();exec7Move(p,card,origOwner,'shield',opp);}},
+      {label:'相手のデッキ上（裏）',cls:'p',fn:()=>{closeModal();exec7Move(p,card,origOwner,'deck',opp);}},
+      {label:'墓地',cls:'r',fn:()=>{closeModal();exec7Move(p,card,origOwner,'grave',opp);}},
+      {label:'キャンセル',cls:'n',fn:()=>{closeModal();restoreCard(card,origOwner,origZone);show7PickModal(p);}},
+    ];
+    showSimpleModal(`${label} の移動先`,btns,'相手のカードは相手の場のみ',p);
+  }else{
+    // 自分のカード: 自分の場のどこでも移動可能
+    btns=[
+      {label:'手札',cls:'b',fn:()=>{closeModal();exec7Move(p,card,origOwner,'hand',p);}},
+      {label:'マナ',cls:'g',fn:()=>{closeModal();exec7Move(p,card,origOwner,'mana',p);}},
+      {label:'フィールド',cls:'o',fn:()=>{closeModal();exec7Move(p,card,origOwner,'field',p);}},
+      {label:'シールド（裏）',cls:'p',fn:()=>{closeModal();exec7Move(p,card,origOwner,'shield',p);}},
+      {label:'デッキ上（裏）',cls:'p',fn:()=>{closeModal();exec7Move(p,card,origOwner,'deck',p);}},
+      {label:'墓地',cls:'r',fn:()=>{closeModal();exec7Move(p,card,origOwner,'grave',p);}},
+      {label:'キャンセル',cls:'n',fn:()=>{closeModal();restoreCard(card,origOwner,origZone);show7PickModal(p);}},
+    ];
+    showSimpleModal(`${label} の移動先`,btns,'移動先を選択',p);
+  }
 }
 
 // カードを元ゾーンに戻す（キャンセル用）
