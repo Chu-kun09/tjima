@@ -1426,7 +1426,10 @@ function exec7Move(p,card,origOwner,dest,to){
     G.players[to].shields=newShields;
   }
   else if(dest==='deck'){G.players[to].deck.push(card);}
-  else{card._faceDown=false;sendToGrave(origOwner,card);}
+  else if(dest==='grave'){
+    card._faceDown=false;
+    sendToGrave(to,card); // toのゾーン（自分or相手）の墓地へ
+  }
   fxEffect(p,'カード移動！');
   renderAll();
   G._7selectMode=null;
