@@ -473,7 +473,6 @@ function queueFx(type, data={}){ _pendingFx={type,...data}; }
 // Firebase は null 値と配列インデックスを削除するため
 // shields の null を -1 (整数) に、linkedWith をIDに変換
 function serializeG() {
-  // まずG全体を安全にコピー（循環参照除去）
   const seen = new WeakSet();
   const raw = JSON.parse(JSON.stringify(G, (k, v) => {
     if (k === 'linkedWith') return (v && typeof v === 'object') ? v.id : null;
@@ -482,6 +481,8 @@ function serializeG() {
     if (k === 'selMana') return [];
     return v;
   }));
+  // プレイヤー名を一緒に送る
+  raw._names = { 1: ONLINE.names[1]||'P1', 2: ONLINE.names[2]||'P2' };
   // shields の null を -1 に変換（Firebase が null を配列から削除するため）
   for (const p of ['1','2',1,2]) {
     const pl = raw.players && raw.players[p];
@@ -566,6 +567,12 @@ function deserializeG(snap) {
         c.linkedWith = (typeof c.linkedWith === 'number') ? (cardMap[c.linkedWith] || null) : null;
       });
     }
+  }
+  // 相手の名前を受け取って反映
+  if (raw._names) {
+    const myP = parseInt(ONLINE.myPlayer);
+    const oppP = myP === 1 ? 2 : 1;
+    if (raw._names[oppP]) ONLINE.names[oppP] = raw._names[oppP];
   }
 }
 
@@ -2842,6 +2849,11 @@ function showRetryMenu(savedRoom){
       text-align:center;margin:8px 0;"
       maxlength="10" autocomplete="off" spellcheck="false">
   `;
+  setTimeout(()=>{
+    const inp=document.getElementById('retry-name-input');
+    const myP=parseInt(ONLINE.myPlayer)||1;
+    if(inp) inp.value=ONLINE.names[myP]||'';
+  },50);
   const btnsEl=document.getElementById('modal-btns');
   btnsEl.innerHTML='';
   const nextBtn=document.createElement('button');
@@ -3319,6 +3331,7 @@ function showPlayerNameInput(roomId){
   document.getElementById('modal-subtitle').textContent='Step 2: 名前を入力（空欄でP1/P2）';
   document.getElementById('modal-list').innerHTML=`
     <input id="player-name-input" type="text" placeholder="例: たろう"
+      value="${(()=>{const u=loadUserCache();return u?getDisplayName(u):'';})()}"
       style="width:100%;padding:12px;border-radius:10px;border:2px solid #4a2d8a;
       background:#0e1225;color:#fff;font-size:20px;font-family:'Nunito',sans-serif;
       text-align:center;margin:8px 0;"
