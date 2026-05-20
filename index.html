@@ -140,7 +140,7 @@ html,body{width:100%;height:100dvh;overflow:hidden;background:var(--bg);color:#e
 @keyframes fx-slam{0%{opacity:1;transform:scale(.2);}80%{opacity:.8;}100%{opacity:0;transform:scale(3);}}
 .fx-shield-break{position:absolute;font-size:48px;animation:fx-sb .6s ease-out forwards;}
 @keyframes fx-sb{0%{opacity:1;transform:scale(1) rotate(0deg);}100%{opacity:0;transform:scale(2) rotate(20deg)translateY(-30px);}}
-.fx-word{position:fixed;left:50%;top:40%;transform:translate(-50%,-50%);font-family:'Fredoka One',cursive;text-align:center;pointer-events:none;animation:fx-word 1.8s ease-out forwards;z-index:900;
+.fx-word{position:fixed;left:50%;top:40%;transform:translate(-50%,-50%);font-family:'Fredoka One',cursive;text-align:center;pointer-events:none;animation:fx-word 1.8s ease-out forwards;z-index:900;}
 @keyframes fx-word{0%{opacity:1;transform:translate(-50%,-50%) scale(.5);}40%{opacity:1;transform:translate(-50%,-50%) scale(1.15);}80%{opacity:1;transform:translate(-50%,-55%) scale(1);}100%{opacity:0;transform:translate(-50%,-65%) scale(1);}}
 .fx-direct{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none;animation:fx-dir 1.4s ease-out forwards;}
 @keyframes fx-dir{0%{opacity:0;}20%{opacity:1;}80%{opacity:1;}100%{opacity:0;}}
@@ -2999,22 +2999,40 @@ async function recordResult(won){
 // Googleログイン
 async function loginWithGoogle(){
   const btn = document.getElementById('login-btn');
-  if(btn){ btn.disabled=true; btn.textContent='ログイン中...'; }
+  if(btn){ btn.disabled=true; btn.innerHTML='ログイン中...'; }
   try{
-    // iOSはredirect、それ以外はpopup
-    const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
-    if(isIOS){
-      await signInWithRedirect(auth, googleProvider);
-      // redirectなのでここには戻ってこない
-    }else{
-      await signInWithPopup(auth, googleProvider);
-    }
+    // まずpopupで試みる
+    await signInWithPopup(auth, googleProvider);
   }catch(e){
-    console.error('login error:', e);
-    if(btn){ btn.disabled=false; btn.textContent=''; btn.innerHTML=googleBtnHTML(); }
-    if(e.code !== 'auth/popup-closed-by-user'){
-      toast('ログインに失敗しました: '+e.code);
+    console.error('popup error:', e.code);
+    if(e.code === 'auth/popup-blocked' ||
+       e.code === 'auth/popup-closed-by-user' ||
+       e.code === 'auth/cancelled-popup-request' ||
+       e.code === 'auth/operation-not-supported-in-this-environment'){
+      // popupが使えない環境(Safari等)はredirectにフォールバック
+      try{
+        if(btn){ btn.innerHTML='リダイレクト中...'; }
+        await signInWithRedirect(auth, googleProvider);
+        // ここには戻ってこない
+      }catch(e2){
+        console.error('redirect error:', e2);
+        if(btn){ btn.disabled=false; btn.innerHTML=googleBtnHTML(); }
+        showLoginError(e2.code);
+      }
+    }else if(e.code !== 'auth/popup-closed-by-user'){
+      if(btn){ btn.disabled=false; btn.innerHTML=googleBtnHTML(); }
+      showLoginError(e.code);
+    }else{
+      if(btn){ btn.disabled=false; btn.innerHTML=googleBtnHTML(); }
     }
+  }
+}
+
+function showLoginError(code){
+  if(code==='auth/unauthorized-domain'){
+    alert('Domain not authorized. Add chu-kun09.github.io to Firebase Auth settings.');
+  }else{
+    alert('Login error: '+code);
   }
 }
 function googleBtnHTML(){
