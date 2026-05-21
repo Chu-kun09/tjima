@@ -2343,9 +2343,11 @@ function winGame(p,reason){
   G._winner=p;
   G._winReason=reason;
   pushState();
-  const myName=ONLINE.enabled?ONLINE.names[ONLINE.myPlayer]||`P${ONLINE.myPlayer}`:`P${p}`;
-  const oppName=ONLINE.enabled?ONLINE.names[ONLINE.myPlayer===1?2:1]||`P${ONLINE.myPlayer===1?2:1}`:`P${p===1?2:1}`;
-  const winnerName=ONLINE.enabled?ONLINE.names[p]||`P${p}`:`P${p}`;
+  // 名前を取得（オンライン・ローカル共通）
+  const getPN=(n)=>ONLINE.names[n]||`P${n}`;
+  const winnerName=getPN(p);
+  const myP=ONLINE.enabled?ONLINE.myPlayer:p;
+  const myName=getPN(myP);
   document.getElementById('win-title').textContent=`🎉 ${winnerName} の勝利！`;
   document.getElementById('win-sub').textContent=reason;
   const ri=document.getElementById('win-room-info');
