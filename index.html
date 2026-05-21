@@ -451,6 +451,7 @@ let ONLINE = {
   myPlayer: null,
   unsubscribe: null,
   names: {1:'P1', 2:'P2'}, // プレイヤー名
+  myName: null, // 自分の名前（ログイン後に設定）
 };
 
 // ─ DBへ状態をプッシュ（自分のターンの操作後に呼ぶ）─
@@ -2851,8 +2852,13 @@ function showRetryMenu(savedRoom){
   `;
   setTimeout(()=>{
     const inp=document.getElementById('retry-name-input');
-    const myP=parseInt(ONLINE.myPlayer)||1;
-    if(inp) inp.value=ONLINE.names[myP]||'';
+    if(inp) inp.value=ONLINE.myName||'';
+  },50);
+  // 登録済みの名前を初期値として設定
+  setTimeout(()=>{
+    const inp=document.getElementById('player-name-input');
+    const defaultName=ONLINE.myName||(()=>{const u=loadUserCache();return u?getDisplayName(u):''})();
+    if(inp&&defaultName) inp.value=defaultName;
   },50);
   const btnsEl=document.getElementById('modal-btns');
   btnsEl.innerHTML='';
@@ -2975,14 +2981,12 @@ async function onUserLoggedIn(firebaseUser){
   try{
     const userData = await fetchOrCreateUserData(firebaseUser);
     const name = getDisplayName(userData);
-    ONLINE.names[1] = name;
-    ONLINE.names[2] = name;
+    ONLINE.myName = name; // 自分の名前を保存
     showTitleScreen();
   }catch(e){
     console.error('onUserLoggedIn error:', e);
-    // エラーでもゲストとして続行
     const name = firebaseUser.displayName || 'プレイヤー';
-    ONLINE.names[1] = name; ONLINE.names[2] = name;
+    ONLINE.myName = name;
     showTitleScreen();
   }
 }
@@ -3147,6 +3151,7 @@ function showTitleScreen(){
   const avatarEl = document.getElementById('title-user-avatar');
   if(CURRENT_USER && cached){
     const name = getDisplayName(cached);
+    ONLINE.myName = name; // キャッシュから復元
     if(usernameEl) usernameEl.textContent = name;
     if(recordEl) recordEl.textContent = getUserRecord(cached);
     if(avatarEl && CURRENT_USER.photoURL){
@@ -3239,8 +3244,7 @@ function showProfileScreen(){
     let u = loadUserCache() || {wins:0,losses:0};
     u.customName = name;
     saveUserCache(u);
-    ONLINE.names[1] = name;
-    ONLINE.names[2] = name;
+    ONLINE.myName = name;
     // Firebaseにも保存
     if(CURRENT_USER && db){
       try{
@@ -3342,7 +3346,8 @@ function showPlayerNameInput(roomId){
   const nextBtn=document.createElement('button');
   nextBtn.className='btn g';nextBtn.textContent='次へ ▶';
   nextBtn.onclick=()=>{
-    const name=document.getElementById('player-name-input').value.trim().slice(0,10)||null;
+    const raw=document.getElementById('player-name-input').value.trim().slice(0,10);
+    const name=raw||ONLINE.myName||null;
     showRoleSelect(roomId, name);
   };
   const backBtn=document.createElement('button');
@@ -3366,14 +3371,16 @@ function showRoleSelect(roomId, playerName){
   p1btn.className='btn g';p1btn.style.fontSize='15px';p1btn.style.padding='10px 18px';
   p1btn.textContent='⚔ 先攻（P1）で作成';
   p1btn.onclick=()=>{
-    if(playerName) ONLINE.names[1]=playerName;
+    const n=playerName||ONLINE.myName||'P1';
+    ONLINE.names[1]=n; ONLINE.myPlayer=1;
     closeModal();createRoom(roomId);
   };
   const p2btn=document.createElement('button');
   p2btn.className='btn b';p2btn.style.fontSize='15px';p2btn.style.padding='10px 18px';
   p2btn.textContent='🛡 後攻（P2）で参加';
   p2btn.onclick=()=>{
-    if(playerName) ONLINE.names[2]=playerName;
+    const n=playerName||ONLINE.myName||'P2';
+    ONLINE.names[2]=n; ONLINE.myPlayer=2;
     closeModal();joinRoomByName(roomId);
   };
   const backBtn=document.createElement('button');
