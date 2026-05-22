@@ -615,7 +615,13 @@ function subscribeRoom(roomId) {
       renderAll();
       adjustLayout();
       if(rxFx1 && pusher !== myP){ playRemoteFx(rxFx1, pusher); }
-      if(G.gameOver){showWinScreen();return;}
+      if(G.gameOver){
+      // まだ勝利画面が出ていなければ表示
+      if(!document.getElementById('win-screen').classList.contains('show')){
+        showWinScreen();
+      }
+      return;
+    }
       handleOnlinePhase(phase, myP);
       return;
     }
@@ -629,9 +635,21 @@ function subscribeRoom(roomId) {
     renderAll();
     adjustLayout();
     if(rxFx2 && pusher !== myP){ playRemoteFx(rxFx2, pusher); }
-    if(G.gameOver){showWinScreen();return;}
+    if(G.gameOver){
+      // まだ勝利画面が出ていなければ表示
+      if(!document.getElementById('win-screen').classList.contains('show')){
+        showWinScreen();
+      }
+      return;
+    }
 
-    if(G.gameOver){showWinScreen();return;}
+    if(G.gameOver){
+      // まだ勝利画面が出ていなければ表示
+      if(!document.getElementById('win-screen').classList.contains('show')){
+        showWinScreen();
+      }
+      return;
+    }
 
     const currentTurn = parseInt(G.turn);
     if(currentTurn === myP){
@@ -991,7 +1009,7 @@ function execDirectWithBlock(atk,p,blockers){
       atk.tapped=true;
       if(atk.linkedWith)atk.linkedWith.tapped=true;
       G.atkCard=null;
-      pushState();
+      pushState({type:'attack',label:atkLabel(atk)});
       setBar('相手がブロックを検討中...',[]);
       renderAll();
     }else{
@@ -1134,18 +1152,46 @@ function showCreaturePicker(atk,p){
   showCardPicker(`⚔ ${atkLabel(atk)} が攻撃！`,'タップ済みナンバーズを選択',targets,opp,false,
     (card)=>{
       closeModal();
-      if(ONLINE.enabled){
-        atk.tapped=true;
-        if(atk.linkedWith)atk.linkedWith.tapped=true;
-        G.atkCard=null;
-        G._pendingCreatureAtk={atkId:parseInt(atk.id),targetId:parseInt(card.id),attPlayer:parseInt(p)};
-        G.onlinePhase='creature-attack';
-        pushState({type:'attack',label:atkLabel(atk)});
-        fxAttack(atk,p,card,opp);
-        setTimeout(()=>execCreatureAttack(atk,card,p),500);
+      // 攻撃対象を選択後、ブロッカーがいるか確認
+      const untappedBlockers=G.players[opp].field.filter(
+        c=>(c.num===1||c.num===3)&&!c.tapped&&(!c.linkedWith||c.linkRoot)&&c.id!==card.id
+      );
+      if(untappedBlockers.length){
+        // ブロッカーがいる: 防御側にブロック確認
+        if(ONLINE.enabled){
+          atk.tapped=true;
+          if(atk.linkedWith)atk.linkedWith.tapped=true;
+          G.atkCard=null;
+          G._pendingAtk={atkId:parseInt(atk.id),attPlayer:parseInt(p),targetCreatureId:parseInt(card.id),isDirect:false};
+          G.onlinePhase='block-query';
+          pushState({type:'attack',label:atkLabel(atk)});
+          setBar('相手がブロックを検討中...',[]);
+          renderAll();
+        }else{
+          showSimpleModal(`🛡 ブロックしますか？`,[
+            {label:'ブロックする',cls:'g',fn:()=>{closeModal();showBlockPicker(atk,p,untappedBlockers);}},
+            {label:'ブロックしない',cls:'r',fn:()=>{
+              closeModal();
+              fxAttack(atk,p,card,opp);
+              setTimeout(()=>execCreatureAttack(atk,card,p),500);
+            }},
+          ],`${atkLabel(atk)}(ATK:${getAtkPower(atk)}) vs ${atkLabel(card)}　ブロッカー: ${untappedBlockers.map(c=>CJ[c.color]+c.num).join('/')}`,opp);
+        }
       }else{
-        fxAttack(atk,p,card,opp);
-        setTimeout(()=>execCreatureAttack(atk,card,p),500);
+        // ブロッカーなし: 直接バトル
+        if(ONLINE.enabled){
+          atk.tapped=true;
+          if(atk.linkedWith)atk.linkedWith.tapped=true;
+          G.atkCard=null;
+          G._pendingCreatureAtk={atkId:parseInt(atk.id),targetId:parseInt(card.id),attPlayer:parseInt(p)};
+          G.onlinePhase='creature-attack';
+          pushState({type:'attack',label:atkLabel(atk)});
+          fxAttack(atk,p,card,opp);
+          setTimeout(()=>execCreatureAttack(atk,card,p),500);
+        }else{
+          fxAttack(atk,p,card,opp);
+          setTimeout(()=>execCreatureAttack(atk,card,p),500);
+        }
       }
     },
     [{label:'キャンセル',cls:'n',fn:()=>{closeModal();G.atkCard=null;phaseAttack();}}]
@@ -1396,39 +1442,39 @@ function show7ZonePicker(p){
   for(const op of [1,2]){
     if(G.players[op].hand.length){
       const isOpponent=(op!==p);
-      btns.push({label:`P${op}の手札 (${G.players[op].hand.length}枚)`,cls:'b',
+      btns.push({label:`${ONLINE.names[op]||`P${op}`}の手札 (${G.players[op].hand.length}枚)`,cls:'b',
         fn:()=>{closeModal();show7HandPicker(p,op,isOpponent);}});
     }
   }
   // 両プレイヤーのフィールド（モーダルで一覧 or ボードタップ）
   for(const op of [1,2]){
     if(G.players[op].field.length)
-      btns.push({label:`P${op}のフィールド (${G.players[op].field.length}枚)`,cls:'o',
+      btns.push({label:`${ONLINE.names[op]||`P${op}`}のフィールド (${G.players[op].field.length}枚)`,cls:'o',
         fn:()=>{closeModal();show7FieldPicker(p,op);}});
   }
   // 両プレイヤーのマナ
   for(const op of [1,2]){
     if(G.players[op].mana.length)
-      btns.push({label:`P${op}のマナ (${G.players[op].mana.length}枚)`,cls:'g',
+      btns.push({label:`${ONLINE.names[op]||`P${op}`}のマナ (${G.players[op].mana.length}枚)`,cls:'g',
         fn:()=>{closeModal();show7ManaPicker(p,op);}});
   }
   // 両プレイヤーの墓地
   for(const op of [1,2]){
     if(G.players[op].graveyard.length)
-      btns.push({label:`P${op}の墓地 (${G.players[op].graveyard.length}枚)`,cls:'r',
+      btns.push({label:`${ONLINE.names[op]||`P${op}`}の墓地 (${G.players[op].graveyard.length}枚)`,cls:'r',
         fn:()=>{closeModal();show7GravePicker(p,op);}});
   }
   // 両プレイヤーのシールド1枚目（裏向き）
   for(const op of [1,2]){
     const idx=G.players[op].shields.findIndex(s=>s!==null);
     if(idx!==-1)
-      btns.push({label:`P${op}のシールド先頭（裏）`,cls:'p',
+      btns.push({label:`${ONLINE.names[op]||`P${op}`}のシールド先頭（裏）`,cls:'p',
         fn:()=>{closeModal();exec7Shield(p,op,idx);}});
   }
   // 両プレイヤーのデッキ上（裏向き）
   for(const op of [1,2]){
     if(G.players[op].deck.length)
-      btns.push({label:`P${op}のデッキ上（裏）`,cls:'p',
+      btns.push({label:`${ONLINE.names[op]||`P${op}`}のデッキ上（裏）`,cls:'p',
         fn:()=>{closeModal();exec7DeckTop(p,op);}});
   }
   btns.push({label:'キャンセル',cls:'n',fn:()=>{closeModal();show7PickModal(p);}});
@@ -1440,7 +1486,7 @@ function show7HandPicker(p,op,isOpponent){
     // 相手の手札: 中身を見せずに枚数だけ表示してランダム選択
     const hand=G.players[op].hand;
     const listEl=document.getElementById('modal-list');
-    document.getElementById('modal-title').textContent=`P${op}の手札から選択`;
+    document.getElementById('modal-title').textContent=`${ONLINE.names[op]||`P${op}`}の手札から選択`;
     document.getElementById('modal-subtitle').textContent='裏向きのカードから1枚選択';
     listEl.innerHTML='';
     let sel=null;
@@ -1470,7 +1516,7 @@ function show7HandPicker(p,op,isOpponent){
     document.getElementById('modal-overlay').classList.add('show');
     applyModalDir(p);
   }else{
-    showCardPicker(`P${op}の手札から選択`,'選択して決定を押す',G.players[op].hand,op,false,
+    showCardPicker(`${ONLINE.names[op]||`P${op}`}の手札から選択`,'選択して決定を押す',G.players[op].hand,op,false,
       (card)=>{closeModal();G.players[op].hand=G.players[op].hand.filter(c=>c.id!==card.id);show7DestModal(p,card,op,'hand');},
       [{label:'戻る',cls:'n',fn:()=>{closeModal();show7ZonePicker(p);}}]
     );
@@ -1478,14 +1524,15 @@ function show7HandPicker(p,op,isOpponent){
 }
 function show7FieldPicker(p,op){
   const field=G.players[op].field;
-  showCardPicker(`P${op}のフィールドから選択`,'選択して決定を押す',field,op,false,
+  showCardPicker(`${ONLINE.names[op]||`P${op}`}のフィールドから選択`,'選択して決定を押す',field,op,false,
     (card)=>{
       closeModal();
       G.players[op].field=G.players[op].field.filter(c=>c.id!==card.id);
-      // リンクしていたら解除
+      // リンクしていた場合: パートナーのリンクを解除して場に残す
       if(card.linkedWith){
-        card.linkedWith.linkedWith=null;card.linkedWith.linkRoot=false;
-        card.linkedWith.speedAttacker=false;card.linkedWith=null;
+        const partner=card.linkedWith;
+        partner.linkedWith=null; partner.linkRoot=false; partner.speedAttacker=false;
+        card.linkedWith=null;
       }
       card.linkRoot=false;
       show7DestModal(p,card,op,'field');
@@ -1495,13 +1542,13 @@ function show7FieldPicker(p,op){
 }
 
 function show7ManaPicker(p,op){
-  showCardPicker(`P${op}のマナから選択`,'選択して決定を押す',G.players[op].mana,op,false,
+  showCardPicker(`${ONLINE.names[op]||`P${op}`}のマナから選択`,'選択して決定を押す',G.players[op].mana,op,false,
     (card)=>{closeModal();G.players[op].mana=G.players[op].mana.filter(c=>c.id!==card.id);show7DestModal(p,card,op,'mana');},
     [{label:'戻る',cls:'n',fn:()=>{closeModal();show7ZonePicker(p);}}]
   );
 }
 function show7GravePicker(p,op){
-  showCardPicker(`P${op}の墓地から選択`,'選択して決定を押す',G.players[op].graveyard,op,false,
+  showCardPicker(`${ONLINE.names[op]||`P${op}`}の墓地から選択`,'選択して決定を押す',G.players[op].graveyard,op,false,
     (card)=>{closeModal();G.players[op].graveyard=G.players[op].graveyard.filter(c=>c.id!==card.id);show7DestModal(p,card,op,'grave');},
     [{label:'戻る',cls:'n',fn:()=>{closeModal();show7ZonePicker(p);}}]
   );
@@ -1509,8 +1556,10 @@ function show7GravePicker(p,op){
 // シールド1枚目（裏のまま移動）
 function exec7Shield(p,op,idx){
   const card=G.players[op].shields[idx];
+  if(!card){toast('シールドが見つかりません');show7PickModal(p);return;}
   G.players[op].shields[idx]=null;
-  card._faceDown=true; // 裏向きフラグ
+  card._faceDown=true;
+  renderAll(); // シールド減少を即反映
   show7DestModal(p,card,op,'shield');
 }
 // デッキ上（裏のまま移動）
@@ -1528,6 +1577,13 @@ function on7FieldTap(cardId,cardOwner){
   const card=G.players[cardOwner].field.find(c=>c.id===cardId);
   if(!card)return;
   G.players[cardOwner].field=G.players[cardOwner].field.filter(c=>c.id!==cardId);
+  // リンクしていた場合: パートナーのリンクを解除して場に残す
+  if(card.linkedWith){
+    const partner=card.linkedWith;
+    partner.linkedWith=null; partner.linkRoot=false; partner.speedAttacker=false;
+    card.linkedWith=null;
+  }
+  card.linkRoot=false;
   G._7selectMode=null;
   show7DestModal(p,card,cardOwner,'field');
 }
@@ -2011,22 +2067,25 @@ function processST(){
 
 // STが1枚のときの処理
 function processSTSingle(st){
-  showSimpleModal(`✨ ST: ${st.card.num===6?'退部':'片スパ'} 発動？`,[
-    {label:'発動する！',cls:'g',fn:()=>{
+  const stName=st.card.num===6?'退部':'片スパ';
+  const stDesc=st.card.num===6?'相手フィールドを1枚手札に戻す':'相手フィールドを全タップ';
+  showSimpleModal(`✨ ST: ${CJ[st.card.color]}${st.card.num} (${stName}) 発動？`,[
+    {label:`✅ ${stName}を発動！`,cls:'g',fn:()=>{
       closeModal();
+      const fx8=(st.card.num===8)?'spell':null;
       activateST(st);
       G.pendingST=G.pendingST.filter(s=>s.card.id!==st.card.id);
       if(G.pendingST.length){setTimeout(processST,300);}
-      else stFinish();
+      else stFinish(fx8);
     }},
-    {label:'手札へ',cls:'n',fn:()=>{
+    {label:'🤚 手札に加える（発動しない）',cls:'n',fn:()=>{
       closeModal();
       G.players[st.player].hand.push(st.card);
       G.pendingST=G.pendingST.filter(s=>s.card.id!==st.card.id);
       if(G.pendingST.length){setTimeout(processST,300);}
       else{renderAll();stFinish();}
     }},
-  ],`${st.card.num===6?'退部（相手フィールドを1枚手札に戻す）':'片スパ（相手フィールドを全タップ）'}`,st.player);
+  ],stDesc,st.player);
 }
 
 // 複数STを一覧表示して選択
@@ -2057,10 +2116,11 @@ function showSTMultiModal(player){
     useBtn.textContent='発動';
     useBtn.onclick=()=>{
       closeModal();
+      const fx8=(st.card.num===8)?'spell':null;
       activateST(st);
       G.pendingST=G.pendingST.filter(s=>s.card.id!==st.card.id);
       if(G.pendingST.length){setTimeout(()=>showSTMultiModal(player),300);}
-      else stFinish();
+      else stFinish(fx8);
     };
     const handBtn=document.createElement('button');
     handBtn.className='btn n';handBtn.style.fontSize='12px';handBtn.style.padding='6px 10px';
@@ -2095,10 +2155,11 @@ function showSTMultiModal(player){
 }
 
 // STが全部終わったあとの後処理
-function stFinish(){
+// STが全部終わった後の後処理（fxTypeはエフェクト種別）
+function stFinish(fxType){
   if(ONLINE.enabled){
     G.onlinePhase='attack-continue';G._pendingAtk=null;
-    pushState({type:'st_finish'});renderAll();
+    pushState(fxType?{type:fxType}:{type:'st_finish'});renderAll();
   }else{
     renderAll();if(G.phase==='attack')setTimeout(phaseAttack,300);
   }
@@ -2110,9 +2171,9 @@ function activateST(st){
     G.players[opp].field.forEach(c=>c.tapped=true);
     sendToGrave(st.player,st.card);
     fxSpell(st.player);
-    toast(`⚡ ST片スパ！ P${opp}フィールドを全タップ`);
+    toast(`⚡ ST片スパ！ ${ONLINE.names[opp]||'P'+opp}フィールドを全タップ`);
     renderAll();
-    if(ONLINE.enabled){pushState({type:'spell'});}
+    // pushStateはactivateST呼び出し元(processST/showSTMultiModal)のstFinishで行う
     return;
   }
   st.card.tapped=false;st.card.summonedThisTurn=false;
@@ -2135,13 +2196,17 @@ function activateST(st){
 // 6のST効果：相手フィールドのカード1枚を手札に戻す
 function show6BounceModal(p){
   const opp=p===1?2:1;
-  const targets=G.players[opp].field;
+  // リンクはroot側のみ選択肢に出す（sub側は非表示）
+  const targets=G.players[opp].field.filter(c=>!c.linkedWith||c.linkRoot);
   if(!targets.length){toast('相手フィールドにカードがありません');return;}
   showCardPicker('6の効果: 相手カードを手札に戻す','選択して決定を押す',targets,opp,false,
     (card)=>{
       closeModal();
+      // リンクしていた場合: パートナーのリンクを解除して場に残す
       if(card.linkedWith){
-        card.linkedWith.linkedWith=null;card.linkedWith.linkRoot=false;card.linkedWith.speedAttacker=false;card.linkedWith=null;
+        const partner=card.linkedWith;
+        partner.linkedWith=null; partner.linkRoot=false; partner.speedAttacker=false;
+        card.linkedWith=null;
       }
       card.linkRoot=false; card.tapped=false;
       G.players[opp].field=G.players[opp].field.filter(c=>c.id!==card.id);
@@ -2340,7 +2405,10 @@ function winGame(p,reason){
   G._winReason=reason;
   pushState();
   // 名前を取得（オンライン・ローカル共通）
-  const getPN=(n)=>ONLINE.names[n]||`P${n}`;
+  const getPN=(n)=>{
+    const n2=parseInt(n);
+    return ONLINE.names[n2]||(ONLINE.myName&&n2===parseInt(ONLINE.myPlayer)?ONLINE.myName:null)||`P${n2}`;
+  };
   const winnerName=getPN(p);
   const myP=ONLINE.enabled?ONLINE.myPlayer:p;
   const myName=getPN(myP);
@@ -3417,6 +3485,9 @@ async function createRoom(roomId){
   ONLINE.enabled=true;
   ONLINE.roomId=roomId;
   ONLINE.myPlayer=1;
+  // 前の試合データを完全に削除してから新しいルームを作成
+  try{ await remove(ref(db,`rooms/${roomId}`)); }catch(e){}
+  await new Promise(r=>setTimeout(r,300)); // 削除が反映されるまで少し待つ
   await set(ref(db,`rooms/${roomId}/host`),'waiting');
   showSimpleModal(`ルームID: ${roomId}`,[
     {label:'キャンセル',cls:'r',fn:()=>{
