@@ -2422,9 +2422,12 @@ function winGame(p,reason){
       ri.textContent='ローカル対戦';
     }
   }
-  // 勝敗を記録（オンライン時のみ自分の結果が分かる）
-  if(ONLINE.enabled&&ONLINE.myPlayer){
-    recordResult(p===ONLINE.myPlayer);
+  // 勝敗を記録
+  // オンライン: 自分が勝ったかどうかで記録
+  // ローカル: 毎回P1視点で記録（P1が勝てば勝、負ければ負）
+  if(CURRENT_USER){
+    const iWon = ONLINE.enabled ? (p===parseInt(ONLINE.myPlayer)) : (p===1);
+    recordResult(iWon);
   }
   document.getElementById('win-screen').classList.add('show');
 }
@@ -3063,19 +3066,28 @@ function onUserLoggedOut(){
 }
 
 // ゲーム結果をFirebaseに記録
-async function recordResult(won){
-  if(!CURRENT_USER || !db) return;
-  try{
+// 戦績記録: ローカルキャッシュを即更新してFirebaseはバックグラウンドで同期
+function recordResult(won){
+  // ローカルキャッシュを即更新
+  const cached = loadUserCache();
+  if(cached){
+    if(won) cached.wins = (cached.wins||0)+1;
+    else cached.losses = (cached.losses||0)+1;
+    saveUserCache(cached);
+    console.log('[recordResult] local saved:', cached.wins, 'W', cached.losses, 'L');
+  }
+  // Firebaseにバックグラウンドで同期
+  if(CURRENT_USER && db){
     const uid = CURRENT_USER.uid;
     const userRef = ref(db, `users/${uid}`);
-    const snap = await get(userRef);
-    if(!snap.exists()) return;
-    const data = snap.val();
-    if(won) data.wins = (data.wins||0)+1;
-    else data.losses = (data.losses||0)+1;
-    await set(userRef, data);
-    saveUserCache(data);
-  }catch(e){ console.error('recordResult error:', e); }
+    get(userRef).then(snap=>{
+      if(!snap.exists()) return;
+      const data = snap.val();
+      if(won) data.wins = (data.wins||0)+1;
+      else data.losses = (data.losses||0)+1;
+      return set(userRef, data);
+    }).catch(e=>console.warn('recordResult Firebase error:', e));
+  }
 }
 
 // Googleログイン
