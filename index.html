@@ -408,10 +408,11 @@ getRedirectResult(auth).then(result=>{
 </div>
 
 <!-- BGM トラック群 -->
-<audio id="bgm-0"    src="0.mp3"         loop preload="none"></audio>
-<audio id="bgm-34"   src="link34.mp3"    loop preload="none"></audio>
-<audio id="bgm-7"    src="7.mp3"         loop preload="none"></audio>
-<audio id="bgm-main" src="normalBGM.mp3" loop preload="none"></audio>
+<audio id="bgm-0"       src="0.mp3"         loop preload="none"></audio>
+<audio id="bgm-34"      src="link34.mp3"    loop preload="none"></audio>
+<audio id="bgm-7"       src="7.mp3"         loop preload="none"></audio>
+<audio id="bgm-noshield" src="noshield.mp3" loop preload="none"></audio>
+<audio id="bgm-main"   src="normalBGM.mp3" loop preload="none"></audio>
 
 <!-- BGMボタン（右上・リセットボタンの下） -->
 <button id="bgm-btn" onclick="toggleBGM()"
@@ -3337,6 +3338,7 @@ function showLoginScreen(){
 // 優先度: 0 > 3+4リンク > 7 > メイン
 // 各トラックIDと判定条件
 const BGM_TRACKS = [
+  { id:'bgm-noshield', label:'noshield', check:(p)=> G.players&&G.players[p]&&G.players[p].shields.filter(Boolean).length===0&&G.phase!=='setup' },
   { id:'bgm-0',    label:'0',    check:(p)=> G.players&&G.players[p]&&G.players[p].field.some(c=>c.num===0) },
   { id:'bgm-34',   label:'34',   check:(p)=> G.players&&G.players[p]&&G.players[p].field.some(c=>c.linkedWith&&(c.num===3||c.num===4)&&c.linkRoot) },
   { id:'bgm-7',    label:'7',    check:(p)=> G.players&&G.players[p]&&G.players[p].field.some(c=>c.num===7) },
