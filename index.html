@@ -558,6 +558,7 @@ function deserializeG(snap) {
     _pendingAtk:  raw._pendingAtk || null,
     _blockerId:   raw._blockerId !== undefined ? raw._blockerId : null,
     _shieldConfirmed: raw._shieldConfirmed || false,
+    _6linkedChoice: raw._6linkedChoice || null,
     players: {
       1: makePlayer(p1raw),
       2: makePlayer(p2raw),
@@ -623,6 +624,7 @@ function subscribeRoom(roomId) {
         'attack-continue':pusher===myP && iAmDef,  // 防御側が自分でpushしたattack-continueはスキップ
         'direct-attack':  false,  // 双方が受け取る
         'creature-attack': pusher===myP && iAmAtt, // 攻撃側自身はスキップ
+        '6-linked-choice': pusher===myP,           // pushした側（6使用者）はスキップ、相手のみ処理
       };
       if(skipPhases[phase]){return;}
 
@@ -2006,6 +2008,51 @@ function handleOnlinePhase(phase, myP){
       setBar('相手が攻撃継続中...',[]);
     }
   }
+  else if(phase==='6-linked-choice'){
+    // 6効果リンク選択: 相手（カードの持ち主）がどちらを手札に戻すか選ぶ
+    const link=G._6linkedChoice;
+    if(!link) return;
+    const cardOwner=parseInt(link.owner);
+    if(myP===cardOwner){
+      // 自分がカードの持ち主 → 選択モーダルを表示
+      const cardA=G.players[cardOwner].field.find(c=>c.id===link.idA);
+      const cardB=G.players[cardOwner].field.find(c=>c.id===link.idB);
+      if(!cardA||!cardB){ G.onlinePhase=null; G._6linkedChoice=null; pushState(); return; }
+      showSimpleModal(
+        `どちらを手札に戻しますか？`,
+        [
+          {label:`${CJ[cardA.color]}${cardA.num}を手札へ`,cls:'g',fn:()=>{
+            closeModal();
+            cardA.linkedWith=null; cardA.linkRoot=false; cardA.speedAttacker=false;
+            cardB.linkedWith=null; cardB.linkRoot=false; cardB.speedAttacker=false;
+            G.players[cardOwner].field=G.players[cardOwner].field.filter(c=>c.id!==cardA.id);
+            cardA.tapped=false;
+            G.players[cardOwner].hand.push(cardA);
+            G.onlinePhase='attack-continue'; G._pendingAtk=null; G._6linkedChoice=null;
+            toast(`👋 ${CJ[cardA.color]}${cardA.num}を手札へ、${CJ[cardB.color]}${cardB.num}はフィールドに残る`);
+            pushState();
+            renderAll();
+          }},
+          {label:`${CJ[cardB.color]}${cardB.num}を手札へ`,cls:'g',fn:()=>{
+            closeModal();
+            cardA.linkedWith=null; cardA.linkRoot=false; cardA.speedAttacker=false;
+            cardB.linkedWith=null; cardB.linkRoot=false; cardB.speedAttacker=false;
+            G.players[cardOwner].field=G.players[cardOwner].field.filter(c=>c.id!==cardB.id);
+            cardB.tapped=false;
+            G.players[cardOwner].hand.push(cardB);
+            G.onlinePhase='attack-continue'; G._pendingAtk=null; G._6linkedChoice=null;
+            toast(`👋 ${CJ[cardB.color]}${cardB.num}を手札へ、${CJ[cardA.color]}${cardA.num}はフィールドに残る`);
+            pushState();
+            renderAll();
+          }},
+        ],
+        `もう1枚はフィールドにそのまま残ります`,
+        cardOwner
+      );
+    }else{
+      setBar('相手がカードを選択中...',[]);
+    }
+  }
 }
 
 // オンライン: シールドを実際に割ってGを更新してpush
@@ -2262,22 +2309,29 @@ function show6BounceModal(p){
 }
 
 // リンクペア選択後: 持ち主（opp）がどちらを手札に戻すか選ぶ
-// リンク解除・フィールド除去は選択後に行う
+// オンライン: pushStateで相手側にモーダルを出す
+// ローカル: そのままモーダル表示
 function show6LinkedChoiceModal(p, opp, cardA, cardB){
-  // showSimpleModal(title, btns, subtitle, forPlayer)
+  if(ONLINE.enabled){
+    // Firebaseに選択情報を送り、相手側で処理させる
+    G.onlinePhase='6-linked-choice';
+    G._6linkedChoice={ owner:opp, idA:cardA.id, idB:cardB.id };
+    G._pendingAtk=G._pendingAtk||null;
+    pushState();
+    setBar('相手がカードを選択中...',[]);
+    return;
+  }
+  // ローカル対戦: その場でモーダル表示
   showSimpleModal(
     `どちらを手札に戻しますか？`,
     [
       {label:`${CJ[cardA.color]}${cardA.num}を手札へ`,cls:'g',fn:()=>{
         closeModal();
-        // 選択後にリンク解除
         cardA.linkedWith=null; cardA.linkRoot=false; cardA.speedAttacker=false;
         cardB.linkedWith=null; cardB.linkRoot=false; cardB.speedAttacker=false;
-        // cardAを手札へ
         G.players[opp].field=G.players[opp].field.filter(c=>c.id!==cardA.id);
         cardA.tapped=false;
         G.players[opp].hand.push(cardA);
-        // cardBはタップ状態そのままフィールドに残る
         fxEffect(p,'👋 退部！');
         toast(`👋 ${CJ[cardA.color]}${cardA.num}を手札へ、${CJ[cardB.color]}${cardB.num}はフィールドに残る`);
         renderAll();
@@ -2285,14 +2339,11 @@ function show6LinkedChoiceModal(p, opp, cardA, cardB){
       }},
       {label:`${CJ[cardB.color]}${cardB.num}を手札へ`,cls:'g',fn:()=>{
         closeModal();
-        // 選択後にリンク解除
         cardA.linkedWith=null; cardA.linkRoot=false; cardA.speedAttacker=false;
         cardB.linkedWith=null; cardB.linkRoot=false; cardB.speedAttacker=false;
-        // cardBを手札へ
         G.players[opp].field=G.players[opp].field.filter(c=>c.id!==cardB.id);
         cardB.tapped=false;
         G.players[opp].hand.push(cardB);
-        // cardAはタップ状態そのままフィールドに残る
         fxEffect(p,'👋 退部！');
         toast(`👋 ${CJ[cardB.color]}${cardB.num}を手札へ、${CJ[cardA.color]}${cardA.num}はフィールドに残る`);
         renderAll();
@@ -3401,7 +3452,10 @@ function updateBGM(){
     if(t.id===nextId){
       if(a.paused){
         a.volume=0.4;
-        a.play().catch(e=>console.warn(`[BGM] play failed: ${t.id}`, e));
+        a.play().catch(e=>{
+          console.warn(`[BGM] play failed: ${t.id}`, e);
+          _currentBgmId=null; // 失敗したら次回リトライできるようリセット
+        });
       }
     }else{
       if(!a.paused){a.pause();a.currentTime=0;}
