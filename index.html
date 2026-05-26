@@ -736,8 +736,8 @@ function showWinScreen(){
     const myName = ONLINE.names[ONLINE.myPlayer] || `P${ONLINE.myPlayer}`;
     ri.textContent = `ROOM: ${ONLINE.roomId}　${myName}として参加中`;
   }
-  // 相手側でも戦績を記録（オンライン対戦で自分がpushした側ではない場合）
-  if(CURRENT_USER){
+  // 受信側の戦績記録（オンライン対戦のみ）
+  if(ONLINE.enabled && CURRENT_USER){
     const iWon = (parseInt(winner) === parseInt(ONLINE.myPlayer));
     const doRecord = () => recordResult(iWon);
     if(db){ doRecord(); }
@@ -2497,17 +2497,13 @@ function winGame(p,reason){
     }
   }
   // 勝敗を記録
-  // オンライン: winGameを呼んだ側（push送信側）のみここで記録。
-  //             受信側はsubscribeRoom内のshowWinScreen()で記録する。
-  // ローカル: P1が勝てば勝、負ければ負（P1視点）
-  const doRecord = () => {
-    if(CURRENT_USER){
-      const iWon = ONLINE.enabled ? (parseInt(p)===parseInt(ONLINE.myPlayer)) : (parseInt(p)===1);
-      recordResult(iWon);
-    }
-  };
-  if(db){ doRecord(); }
-  else { window._fbReady.then(()=>doRecord()); }
+  // オンライン対戦のみ戦績を記録（ローカルは記録しない）
+  if(ONLINE.enabled && CURRENT_USER){
+    const iWon = parseInt(p)===parseInt(ONLINE.myPlayer);
+    const doRecord = () => recordResult(iWon);
+    if(db){ doRecord(); }
+    else { window._fbReady.then(()=>doRecord()); }
+  }
   document.getElementById('win-screen').classList.add('show');
 }
 
