@@ -408,13 +408,18 @@ getRedirectResult(auth).then(result=>{
 </div>
 
 <!-- BGM トラック群 -->
+<audio id="bgm-0"    src="0.mp3"         loop preload="none"></audio>
+<audio id="bgm-34"   src="link34.mp3"    loop preload="none"></audio>
+<audio id="bgm-7"    src="7.mp3"         loop preload="none"></audio>
+<audio id="bgm-main" src="normalBGM.mp3" loop preload="none"></audio>
 
 <!-- BGMボタン（右上・リセットボタンの下） -->
 <button id="bgm-btn" onclick="toggleBGM()"
   style="position:fixed;top:32px;right:4px;z-index:9997;
-  background:rgba(74,45,138,.7);color:#fff;border:none;
-  border-radius:20px;font-size:12px;padding:4px 10px;cursor:pointer;
-  backdrop-filter:blur(6px);">
+  background:rgba(74,45,138,.85);color:#fff;border:1px solid rgba(255,255,255,.2);
+  border-radius:20px;font-family:'Fredoka One',cursive;font-size:13px;padding:5px 11px;cursor:pointer;
+  backdrop-filter:blur(6px);box-shadow:0 2px 8px rgba(0,0,0,.4);
+  transition:background .15s;">
   🎵 ON
 </button>
 <!-- フリーズ対策: 小さいリセットボタン -->
@@ -429,13 +434,13 @@ getRedirectResult(auth).then(result=>{
 'use strict';
 
 // ── Firebase はwindow経由で受け取る（head内moduleで初期化）──
-let db, ref, set, get, onValue, remove;
+let db, ref, set, get, onValue, update, remove;
 let auth, googleProvider, signInWithPopup, signInWithRedirect, onAuthStateChanged, signOut;
 let CURRENT_USER = null; // ログイン中のFirebase User
 
 window._fbReady = new Promise(resolve => { window._fbResolve = resolve; });
 window._fbReady.then(fb => {
-  db=fb.db; ref=fb.ref; set=fb.set; get=fb.get; onValue=fb.onValue; remove=fb.remove;
+  db=fb.db; ref=fb.ref; set=fb.set; get=fb.get; onValue=fb.onValue; update=fb.update; remove=fb.remove;
   auth=fb.auth; googleProvider=fb.googleProvider;
   signInWithPopup=fb.signInWithPopup; signInWithRedirect=fb.signInWithRedirect;
   onAuthStateChanged=fb.onAuthStateChanged; signOut=fb.signOut;
@@ -2434,11 +2439,15 @@ function winGame(p,reason){
   }
   // 勝敗を記録
   // オンライン: 自分が勝ったかどうかで記録
-  // ローカル: 毎回P1視点で記録（P1が勝てば勝、負ければ負）
-  if(CURRENT_USER){
-    const iWon = ONLINE.enabled ? (p===parseInt(ONLINE.myPlayer)) : (p===1);
-    recordResult(iWon);
-  }
+  // ローカル: P1が勝てば勝、負ければ負（P1視点）
+  const doRecord = () => {
+    if(CURRENT_USER){
+      const iWon = ONLINE.enabled ? (parseInt(p)===parseInt(ONLINE.myPlayer)) : (parseInt(p)===1);
+      recordResult(iWon);
+    }
+  };
+  if(db){ doRecord(); }
+  else { window._fbReady.then(()=>doRecord()); }
   document.getElementById('win-screen').classList.add('show');
 }
 
@@ -3077,8 +3086,9 @@ function onUserLoggedOut(){
 }
 
 // ゲーム結果をFirebaseに記録
-// 戦績記録: ローカルキャッシュを即更新してFirebaseはバックグラウンドで同期
+// 戦績記録: ローカルキャッシュを即更新してFirebaseはupdateで同期
 function recordResult(won){
+  console.log('[recordResult] called won=', won, 'CURRENT_USER=', CURRENT_USER ? CURRENT_USER.uid : 'null');
   // ローカルキャッシュを即更新
   const cached = loadUserCache();
   if(cached){
@@ -3086,18 +3096,40 @@ function recordResult(won){
     else cached.losses = (cached.losses||0)+1;
     saveUserCache(cached);
     console.log('[recordResult] local saved:', cached.wins, 'W', cached.losses, 'L');
+    // タイトル画面の戦績表示も即更新
+    const recordEl = document.getElementById('title-record');
+    if(recordEl) recordEl.textContent = getUserRecord(cached);
   }
-  // Firebaseにバックグラウンドで同期
+  // Firebaseに同期（updateで該当フィールドのみ更新してレースコンディション回避）
   if(CURRENT_USER && db){
     const uid = CURRENT_USER.uid;
     const userRef = ref(db, `users/${uid}`);
+    // まず現在の値を取得してから+1する（トランザクション代わり）
     get(userRef).then(snap=>{
-      if(!snap.exists()) return;
-      const data = snap.val();
-      if(won) data.wins = (data.wins||0)+1;
-      else data.losses = (data.losses||0)+1;
-      return set(userRef, data);
-    }).catch(e=>console.warn('recordResult Firebase error:', e));
+      let wins = 0, losses = 0;
+      if(snap.exists()){
+        const data = snap.val();
+        wins = data.wins||0;
+        losses = data.losses||0;
+      }
+      if(won) wins++;
+      else losses++;
+      // updateで wins/losses フィールドのみ更新（他フィールドを消さない）
+      return update(userRef, { wins, losses });
+    }).then(()=>{
+      console.log('[recordResult] Firebase updated OK');
+      // Firebaseの最新値でキャッシュを同期
+      return get(userRef);
+    }).then(snap=>{
+      if(snap.exists()){
+        const data = snap.val();
+        saveUserCache(data);
+        const recordEl = document.getElementById('title-record');
+        if(recordEl) recordEl.textContent = getUserRecord(data);
+      }
+    }).catch(e=>console.warn('[recordResult] Firebase error:', e));
+  } else {
+    console.warn('[recordResult] skipped: CURRENT_USER=', CURRENT_USER, 'db=', db ? 'ok' : 'null');
   }
 }
 
