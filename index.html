@@ -727,8 +727,21 @@ function playRemoteFx(fx, pusherP){
 
 function showWinScreen(){
   const winner = G._winner || G.turn;
-  document.getElementById('win-title').textContent = `🎉 P${winner} の勝利！`;
+  const winnerName = ONLINE.names[winner] || `P${winner}`;
+  document.getElementById('win-title').textContent = `🎉 ${winnerName} の勝利！`;
   document.getElementById('win-sub').textContent = G._winReason || '';
+  const ri = document.getElementById('win-room-info');
+  if(ri && ONLINE.enabled && ONLINE.roomId){
+    const myName = ONLINE.names[ONLINE.myPlayer] || `P${ONLINE.myPlayer}`;
+    ri.textContent = `ROOM: ${ONLINE.roomId}　${myName}として参加中`;
+  }
+  // 相手側でも戦績を記録（オンライン対戦で自分がpushした側ではない場合）
+  if(CURRENT_USER){
+    const iWon = (parseInt(winner) === parseInt(ONLINE.myPlayer));
+    const doRecord = () => recordResult(iWon);
+    if(db){ doRecord(); }
+    else { window._fbReady.then(()=>doRecord()); }
+  }
   document.getElementById('win-screen').classList.add('show');
 }
 
@@ -788,6 +801,7 @@ function newPl(){return{deck:[],hand:[],field:[],mana:[],shields:[],graveyard:[]
 
 function initGame(){
   _uid=0;
+  _resultRecorded = false; // 戦績記録フラグリセット
   G={turn:1,phase:'setup',isFirstTurn:true,pendingST:[],gameOver:false,
      selCard:null,     // 手札選択中カード（チャージ/召喚/攻撃）
      selMana:[],       // マナ選択中IDs
@@ -2209,47 +2223,89 @@ function activateST(st){
 }
 
 // 6のST効果：相手フィールドのカード1枚を手札に戻す
+// リンクペアも選択可能。ペアを選んだ場合は持ち主がどちらを手札に戻すか選ぶ
 function show6BounceModal(p){
   const opp=p===1?2:1;
-  // リンクはroot側のみ選択肢に出す（sub側は非表示）
+  // 全カードを対象に（linkRootのペアは代表として1エントリ、サブは非表示）
   const targets=G.players[opp].field.filter(c=>!c.linkedWith||c.linkRoot);
   if(!targets.length){toast('相手フィールドにカードがありません');return;}
+
+  // ラベル生成：リンクペアは「赤3+青4リンク」形式
+  function cardLabel(c){
+    if(c.linkedWith&&c.linkRoot) return `${CJ[c.color]}${c.num}＋${CJ[c.linkedWith.color]}${c.linkedWith.num} リンク`;
+    return `${CJ[c.color]}${c.num}`;
+  }
+
   showCardPicker('6の効果: 相手カードを手札に戻す','選択して決定を押す',targets,opp,false,
     (card)=>{
       closeModal();
-      // リンクしていた場合: パートナーのリンクを解除して場に残す
-      if(card.linkedWith){
+      if(card.linkedWith && card.linkRoot){
+        // リンクペアが選ばれた → 持ち主（opp）がどちらを手札に戻すか選択
         const partner=card.linkedWith;
-        partner.linkedWith=null; partner.linkRoot=false; partner.speedAttacker=false;
-        card.linkedWith=null;
-      }
-      card.linkRoot=false; card.tapped=false;
-      G.players[opp].field=G.players[opp].field.filter(c=>c.id!==card.id);
-      G.players[opp].hand.push(card);
-      fxEffect(p,'👋 退部！');
-      if(!ONLINE.enabled) fxEffect(opp,'👋 退部された！');
-      toast(`👋 退部！ ${CJ[card.color]}${card.num}をP${opp}の手札に戻した`);
-      renderAll();
-      if(ONLINE.enabled&&G.phase==='attack'){
-        // STとして発動した6: 攻撃継続フェーズへ
-        G.onlinePhase='attack-continue';G._pendingAtk=null;
-        pushState();
+        show6LinkedChoiceModal(p, opp, card, partner);
       }else{
-        checkExTjia(p);
-        setTimeout(()=>{if(G.phase==='summon')phaseSummon();},400);
+        // 単体カード: そのまま手札に戻す
+        card.linkRoot=false; card.tapped=false;
+        G.players[opp].field=G.players[opp].field.filter(c=>c.id!==card.id);
+        G.players[opp].hand.push(card);
+        fxEffect(p,'👋 退部！');
+        toast(`👋 退部！ ${CJ[card.color]}${card.num}をP${opp}の手札に戻した`);
+        renderAll();
+        after6Bounce(p);
       }
     },
-    [{label:'スキップ',cls:'n',fn:()=>{
-      closeModal();
-      if(ONLINE.enabled&&G.phase==='attack'){
-        G.onlinePhase='attack-continue';G._pendingAtk=null;
-        pushState();
-      }else{
-        checkExTjia(p);
-        setTimeout(()=>{if(G.phase==='summon')phaseSummon();},400);
-      }
-    }}]
+    [{label:'スキップ',cls:'n',fn:()=>{closeModal();after6Bounce(p);}}],
+    null,
+    cardLabel // ラベルカスタマイズ関数を渡す（showCardPickerは後述で対応）
   );
+}
+
+// リンクペア選択後: 持ち主がどちらを手札に戻すか選ぶ（もう1枚はフィールドにタップ状態そのまま残る）
+function show6LinkedChoiceModal(p, opp, cardA, cardB){
+  // リンク解除のみ（フィールドからはまだ除去しない）
+  cardA.linkedWith=null; cardA.linkRoot=false; cardA.speedAttacker=false;
+  cardB.linkedWith=null; cardB.linkRoot=false; cardB.speedAttacker=false;
+
+  fxEffect(p,'👋 退部！（リンク解除）');
+
+  showSimpleModal(
+    `リンク解除！ どちらを手札に戻しますか？`,
+    `もう1枚はフィールドにそのまま残ります`,
+    [
+      {label:`${CJ[cardA.color]}${cardA.num}を手札へ`,cls:'g',fn:()=>{
+        closeModal();
+        G.players[opp].field=G.players[opp].field.filter(c=>c.id!==cardA.id);
+        cardA.tapped=false;
+        G.players[opp].hand.push(cardA);
+        // cardBはタップ状態そのままフィールドに残る
+        toast(`👋 ${CJ[cardA.color]}${cardA.num}を手札へ、${CJ[cardB.color]}${cardB.num}はフィールドに残る`);
+        renderAll();
+        after6Bounce(p);
+      }},
+      {label:`${CJ[cardB.color]}${cardB.num}を手札へ`,cls:'g',fn:()=>{
+        closeModal();
+        G.players[opp].field=G.players[opp].field.filter(c=>c.id!==cardB.id);
+        cardB.tapped=false;
+        G.players[opp].hand.push(cardB);
+        // cardAはタップ状態そのままフィールドに残る
+        toast(`👋 ${CJ[cardB.color]}${cardB.num}を手札へ、${CJ[cardA.color]}${cardA.num}はフィールドに残る`);
+        renderAll();
+        after6Bounce(p);
+      }},
+    ],
+    opp
+  );
+}
+
+// 6効果後の共通後処理
+function after6Bounce(p){
+  if(ONLINE.enabled&&G.phase==='attack'){
+    G.onlinePhase='attack-continue';G._pendingAtk=null;
+    pushState();
+  }else{
+    checkExTjia(p);
+    setTimeout(()=>{if(G.phase==='summon')phaseSummon();},400);
+  }
 }
 
 // ─ ユーティリティ ─
@@ -2438,7 +2494,8 @@ function winGame(p,reason){
     }
   }
   // 勝敗を記録
-  // オンライン: 自分が勝ったかどうかで記録
+  // オンライン: winGameを呼んだ側（push送信側）のみここで記録。
+  //             受信側はsubscribeRoom内のshowWinScreen()で記録する。
   // ローカル: P1が勝てば勝、負ければ負（P1視点）
   const doRecord = () => {
     if(CURRENT_USER){
@@ -2765,7 +2822,7 @@ function updateStats(){
 //  モーダルシステム
 // ═══════════════════════════════════
 let _scpForPlayer=null;
-function showCardPicker(title,subtitle,cards,owner,isMana,onSelect,extraBtns=[],forPlayer=null){
+function showCardPicker(title,subtitle,cards,owner,isMana,onSelect,extraBtns=[],forPlayer=null,labelFn=null){
   _scpForPlayer=forPlayer;
   document.getElementById('modal-title').textContent=title;
   document.getElementById('modal-subtitle').textContent=subtitle;
@@ -2779,7 +2836,18 @@ function showCardPicker(title,subtitle,cards,owner,isMana,onSelect,extraBtns=[],
       const cost=(!isMana&&G.phase==='summon')?getSummonCost(owner,card):null;
       const ok=cost!==null?canSummon(owner,card):null;
       const ct=cost!==null?(ok?'✔ コスト'+cost:'✖ コスト'+cost+'/マナ'+availMana(owner)):'';
-      row.innerHTML=`<div class="mcard ${card.color}${card.tapped?' tapped':''}">${card.num}</div><div style="flex:1;min-width:0"><div class="iname">${CJ[card.color]}${card.num} ${ICON[card.num]||''}</div><div class="idesc">${ct?ct+'　':''}${EFF[card.num]||''}</div></div>`;
+      // リンクペアのカスタムラベル対応
+      const customName = labelFn ? labelFn(card) : null;
+      const displayName = customName || `${CJ[card.color]}${card.num} ${ICON[card.num]||''}`;
+      const isLinkedPair = card.linkedWith && card.linkRoot;
+      // リンクペアはカード表示を2枚重ねアイコンで
+      const cardIcon = isLinkedPair
+        ? `<div style="position:relative;width:52px;height:36px;flex-shrink:0;">
+             <div class="mcard ${card.color}" style="position:absolute;left:0;top:0;width:36px;height:36px;">${card.num}</div>
+             <div class="mcard ${card.linkedWith.color}" style="position:absolute;left:16px;top:0;width:36px;height:36px;border-left:2px solid rgba(0,0,0,.3);">${card.linkedWith.num}</div>
+           </div>`
+        : `<div class="mcard ${card.color}${card.tapped?' tapped':''}">${card.num}</div>`;
+      row.innerHTML=`${cardIcon}<div style="flex:1;min-width:0"><div class="iname">${displayName}</div><div class="idesc">${ct?ct+'　':''}${isLinkedPair?'リンクペア（どちらかを手札に戻す）':EFF[card.num]||''}</div></div>`;
       if(onSelect)row.addEventListener('click',()=>{sel=card;renderRows();renderBtns();});
       listEl.appendChild(row);
     });
@@ -3087,7 +3155,10 @@ function onUserLoggedOut(){
 
 // ゲーム結果をFirebaseに記録
 // 戦績記録: ローカルキャッシュを即更新してFirebaseはupdateで同期
+let _resultRecorded = false; // 同一ゲームで2回記録しないためのフラグ
 function recordResult(won){
+  if(_resultRecorded){ console.warn('[recordResult] already recorded, skip'); return; }
+  _resultRecorded = true;
   console.log('[recordResult] called won=', won, 'CURRENT_USER=', CURRENT_USER ? CURRENT_USER.uid : 'null');
   // ローカルキャッシュを即更新
   const cached = loadUserCache();
@@ -3100,11 +3171,10 @@ function recordResult(won){
     const recordEl = document.getElementById('title-record');
     if(recordEl) recordEl.textContent = getUserRecord(cached);
   }
-  // Firebaseに同期（updateで該当フィールドのみ更新してレースコンディション回避）
+  // Firebaseに同期（updateで該当フィールドのみ更新）
   if(CURRENT_USER && db){
     const uid = CURRENT_USER.uid;
     const userRef = ref(db, `users/${uid}`);
-    // まず現在の値を取得してから+1する（トランザクション代わり）
     get(userRef).then(snap=>{
       let wins = 0, losses = 0;
       if(snap.exists()){
@@ -3114,11 +3184,9 @@ function recordResult(won){
       }
       if(won) wins++;
       else losses++;
-      // updateで wins/losses フィールドのみ更新（他フィールドを消さない）
       return update(userRef, { wins, losses });
     }).then(()=>{
       console.log('[recordResult] Firebase updated OK');
-      // Firebaseの最新値でキャッシュを同期
       return get(userRef);
     }).then(snap=>{
       if(snap.exists()){
@@ -3129,7 +3197,7 @@ function recordResult(won){
       }
     }).catch(e=>console.warn('[recordResult] Firebase error:', e));
   } else {
-    console.warn('[recordResult] skipped: CURRENT_USER=', CURRENT_USER, 'db=', db ? 'ok' : 'null');
+    console.warn('[recordResult] skipped Firebase: CURRENT_USER=', CURRENT_USER ? 'ok' : 'null', 'db=', db ? 'ok' : 'null');
   }
 }
 
