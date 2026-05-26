@@ -342,7 +342,7 @@ getRedirectResult(auth).then(result=>{
           <div class="zlbl" style="text-align:left;margin-bottom:2px">フィールド</div>
           <div class="field-zone" id="p2-field"></div>
         </div>
-        <div class="sidecol"><div class="zlbl">墓地</div><div class="pile grave-pile" id="p2-grave" onclick="showGrave(2)"><span id="p2-gc">0</span></div></div>
+        <div class="sidecol"><div class="zlbl">墓地</div><div class="pile grave-pile" id="p2-grave"><span id="p2-gc">0</span></div></div>
       </div>
     </div>
   </div>
@@ -357,7 +357,7 @@ getRedirectResult(auth).then(result=>{
           <div class="zlbl" style="text-align:left;margin-bottom:2px">フィールド</div>
           <div class="field-zone" id="p1-field"></div>
         </div>
-        <div class="sidecol"><div class="zlbl">墓地</div><div class="pile grave-pile" id="p1-grave" onclick="showGrave(1)"><span id="p1-gc">0</span></div></div>
+        <div class="sidecol"><div class="zlbl">墓地</div><div class="pile grave-pile" id="p1-grave"><span id="p1-gc">0</span></div></div>
       </div>
       <div class="brow" style="gap:10px;padding-left:2px">
         <div><div class="zlbl" style="text-align:left;margin-bottom:2px">シールド</div><div class="shields-row" id="p1-shields"></div></div>
@@ -2267,10 +2267,11 @@ function show6LinkedChoiceModal(p, opp, cardA, cardB){
   cardB.linkedWith=null; cardB.linkRoot=false; cardB.speedAttacker=false;
 
   fxEffect(p,'👋 退部！（リンク解除）');
+  renderAll();
 
+  // showSimpleModal(title, btns, subtitle, forPlayer) の順番で呼ぶ
   showSimpleModal(
     `リンク解除！ どちらを手札に戻しますか？`,
-    `もう1枚はフィールドにそのまま残ります`,
     [
       {label:`${CJ[cardA.color]}${cardA.num}を手札へ`,cls:'g',fn:()=>{
         closeModal();
@@ -2293,6 +2294,7 @@ function show6LinkedChoiceModal(p, opp, cardA, cardB){
         after6Bounce(p);
       }},
     ],
+    `もう1枚はフィールドにそのまま残ります`,
     opp
   );
 }
@@ -2800,8 +2802,14 @@ function renderDeckGrave(p){
   const pl=G.players[p];
   document.getElementById(`p${p}-dc`).textContent=pl.deck.length;
   const ge=document.getElementById(`p${p}-grave`);
+  if(!ge) return;
+  // onclickを維持しつつ中身を更新
+  ge.onclick=()=>showGrave(p);
   ge.innerHTML=`<span id="p${p}-gc">${pl.graveyard.length}</span>`;
-  if(pl.graveyard.length){const top=pl.graveyard[pl.graveyard.length-1];ge.innerHTML+=`<div class="tc ${top.color}">${top.num}</div>`;}
+  if(pl.graveyard.length){
+    const top=pl.graveyard[pl.graveyard.length-1];
+    ge.innerHTML+=`<div class="tc ${top.color}">${top.num}</div>`;
+  }
 }
 function updateStats(){
   for(const p of [1,2]){
