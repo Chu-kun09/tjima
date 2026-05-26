@@ -2261,35 +2261,39 @@ function show6BounceModal(p){
   );
 }
 
-// リンクペア選択後: 持ち主がどちらを手札に戻すか選ぶ（もう1枚はフィールドにタップ状態そのまま残る）
+// リンクペア選択後: 持ち主（opp）がどちらを手札に戻すか選ぶ
+// リンク解除・フィールド除去は選択後に行う
 function show6LinkedChoiceModal(p, opp, cardA, cardB){
-  // リンク解除のみ（フィールドからはまだ除去しない）
-  cardA.linkedWith=null; cardA.linkRoot=false; cardA.speedAttacker=false;
-  cardB.linkedWith=null; cardB.linkRoot=false; cardB.speedAttacker=false;
-
-  fxEffect(p,'👋 退部！（リンク解除）');
-  renderAll();
-
-  // showSimpleModal(title, btns, subtitle, forPlayer) の順番で呼ぶ
+  // showSimpleModal(title, btns, subtitle, forPlayer)
   showSimpleModal(
-    `リンク解除！ どちらを手札に戻しますか？`,
+    `どちらを手札に戻しますか？`,
     [
       {label:`${CJ[cardA.color]}${cardA.num}を手札へ`,cls:'g',fn:()=>{
         closeModal();
+        // 選択後にリンク解除
+        cardA.linkedWith=null; cardA.linkRoot=false; cardA.speedAttacker=false;
+        cardB.linkedWith=null; cardB.linkRoot=false; cardB.speedAttacker=false;
+        // cardAを手札へ
         G.players[opp].field=G.players[opp].field.filter(c=>c.id!==cardA.id);
         cardA.tapped=false;
         G.players[opp].hand.push(cardA);
         // cardBはタップ状態そのままフィールドに残る
+        fxEffect(p,'👋 退部！');
         toast(`👋 ${CJ[cardA.color]}${cardA.num}を手札へ、${CJ[cardB.color]}${cardB.num}はフィールドに残る`);
         renderAll();
         after6Bounce(p);
       }},
       {label:`${CJ[cardB.color]}${cardB.num}を手札へ`,cls:'g',fn:()=>{
         closeModal();
+        // 選択後にリンク解除
+        cardA.linkedWith=null; cardA.linkRoot=false; cardA.speedAttacker=false;
+        cardB.linkedWith=null; cardB.linkRoot=false; cardB.speedAttacker=false;
+        // cardBを手札へ
         G.players[opp].field=G.players[opp].field.filter(c=>c.id!==cardB.id);
         cardB.tapped=false;
         G.players[opp].hand.push(cardB);
         // cardAはタップ状態そのままフィールドに残る
+        fxEffect(p,'👋 退部！');
         toast(`👋 ${CJ[cardB.color]}${cardB.num}を手札へ、${CJ[cardA.color]}${cardA.num}はフィールドに残る`);
         renderAll();
         after6Bounce(p);
@@ -3334,7 +3338,16 @@ function showLoginScreen(){
 // 優先度: 0 > 3+4リンク > 7 > メイン
 // 各トラックIDと判定条件
 const BGM_TRACKS = [
-  { id:'bgm-noshield', label:'noshield', check:(p)=> G.players&&G.players[p]&&G.players[p].shields.filter(Boolean).length===0&&G.phase!=='setup' },
+  { id:'bgm-noshield', label:'noshield', check:(p)=> {
+      if(!G.players||!G.players[p]) return false;
+      const phase=G.phase;
+      if(!phase||phase==='setup'||phase==='title') return false;
+      if(G.gameOver) return false;
+      const sh=G.players[p].shields;
+      // シールドが配られた後（最大5枚）で0枚になった状態を検出
+      return Array.isArray(sh) && sh.filter(Boolean).length===0 && sh.length>0;
+    }
+  },
   { id:'bgm-0',    label:'0',    check:(p)=> G.players&&G.players[p]&&G.players[p].field.some(c=>c.num===0) },
   { id:'bgm-34',   label:'34',   check:(p)=> G.players&&G.players[p]&&G.players[p].field.some(c=>c.linkedWith&&(c.num===3||c.num===4)&&c.linkRoot) },
   { id:'bgm-7',    label:'7',    check:(p)=> G.players&&G.players[p]&&G.players[p].field.some(c=>c.num===7) },
@@ -3368,23 +3381,27 @@ function pauseAllBGM(){
 // 現在のフィールド状態から再生すべきBGMを決定して切り替える
 function updateBGM(){
   if(!_bgmOn) return;
-  // 両プレイヤーのフィールドを確認して優先度順にチェック
   let nextId = 'bgm-main';
   for(const t of BGM_TRACKS){
-    if(t.check(1)||t.check(2)){
-      nextId = t.id;
-      break;
-    }
+    const r1=t.check(1), r2=t.check(2);
+    if(r1||r2){ nextId = t.id; break; }
   }
-  if(nextId === _currentBgmId) return; // 変化なし
-  // 切り替え
+  // デバッグ: シールド状態をコンソールに出力
+  if(G.players){
+    [1,2].forEach(p=>{
+      const sh=G.players[p]&&G.players[p].shields;
+      if(sh) console.log(`[BGM] P${p} shields:`, JSON.stringify(sh), 'filter:', sh.filter(Boolean).length, 'phase:', G.phase);
+    });
+    console.log(`[BGM] nextId=${nextId} current=${_currentBgmId}`);
+  }
+  if(nextId === _currentBgmId) return;
   BGM_TRACKS.forEach(t=>{
     const a=document.getElementById(t.id);
-    if(!a) return;
+    if(!a){ console.warn(`[BGM] audio element not found: ${t.id}`); return; }
     if(t.id===nextId){
       if(a.paused){
         a.volume=0.4;
-        a.play().catch(()=>{});
+        a.play().catch(e=>console.warn(`[BGM] play failed: ${t.id}`, e));
       }
     }else{
       if(!a.paused){a.pause();a.currentTime=0;}
