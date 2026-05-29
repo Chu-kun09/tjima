@@ -408,11 +408,14 @@ getRedirectResult(auth).then(result=>{
 </div>
 
 <!-- BGM トラック群 -->
-<audio id="bgm-0"       src="0.mp3"         loop preload="none"></audio>
-<audio id="bgm-34"      src="link34.mp3"    loop preload="none"></audio>
-<audio id="bgm-7"       src="7.mp3"         loop preload="none"></audio>
-<audio id="bgm-noshield" src="noshield.mp3" loop preload="none"></audio>
-<audio id="bgm-main"   src="normalBGM.mp3" loop preload="none"></audio>
+<audio id="bgm-0"        src="0.mp3"         loop preload="none"></audio>
+<audio id="bgm-34"       src="link34.mp3"    loop preload="none"></audio>
+<audio id="bgm-7"        src="7.mp3"         loop preload="none"></audio>
+<audio id="bgm-noshield" src="noshield.mp3"  loop preload="none"></audio>
+<audio id="bgm-main"     src="normalBGM.mp3" loop preload="none"></audio>
+<!-- エクTジア専用（loop不要） -->
+<audio id="bgm-ext"     src="exT.mp3"     preload="none"></audio>
+<audio id="bgm-failext" src="failexT.mp3" preload="none"></audio>
 
 <!-- BGMボタン（右上・リセットボタンの下） -->
 <button id="bgm-btn" onclick="toggleBGM()"
@@ -2419,9 +2422,23 @@ function hasExTjia(p){
 // checkExTjia は呼び出しても何もしない（宣言ボタンで対応するため）
 function checkExTjia(p){ /* 自動発動なし - 召喚フェーズで宣言ボタンを使用 */ }
 
+// エクTジア専用BGM: 通常BGMを止めてexT/failexTを再生する
+function playExTBGM(id){
+  if(!_bgmOn) return;
+  // 通常ループBGMを全停止
+  pauseAllBGM();
+  _currentBgmId = null;
+  const a = document.getElementById(id);
+  if(!a) return;
+  a.currentTime = 0;
+  a.volume = 0.5;
+  a.play().catch(e=>console.warn('[BGM] exT play failed', e));
+}
+
 function declareExTjia(p){
   if(!hasExTjia(p)){toast('エクTジアの条件が揃っていません');return;}
   fxExTjia(p);
+  playExTBGM('bgm-ext'); // 色選択画面開始と同時にexT.mp3を再生
   setTimeout(()=>showExTjiaChallenge(p), 1400);
 }
 
@@ -2505,6 +2522,10 @@ function showExTjiaChallenge(p){
         hint.textContent=`正解は ${colorName[correctOrder[step]]} でした`;
         fxFlash('rgba(220,38,38,0.5)');
         fxWord('失敗！','#ef4444',44);
+        // exT.mp3を止めてfailexT.mp3に切り替え
+        const extA=document.getElementById('bgm-ext');
+        if(extA){extA.pause();extA.currentTime=0;}
+        playExTBGM('bgm-failext');
         setTimeout(()=>{
           document.body.removeChild(overlay);
           winGame(opp,'エクTジア失敗！（宣言ミス）');
@@ -2522,7 +2543,15 @@ function showExTjiaChallenge(p){
   const cancel=document.createElement('button');
   cancel.className='btn n';
   cancel.textContent='やっぱりやめる';
-  cancel.onclick=()=>{document.body.removeChild(overlay);phaseSummon();};
+  cancel.onclick=()=>{
+    // exT.mp3を止めて通常BGMに戻す
+    const extA=document.getElementById('bgm-ext');
+    if(extA){extA.pause();extA.currentTime=0;}
+    _currentBgmId=null;
+    updateBGM();
+    document.body.removeChild(overlay);
+    phaseSummon();
+  };
   overlay.appendChild(cancel);
 
   document.body.appendChild(overlay);
