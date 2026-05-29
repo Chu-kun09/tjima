@@ -1,0 +1,802 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Tジマ ルールブック</title>
+<link href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@400;700;900&family=Fredoka+One&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#0d0f1a;
+    --surface:#13162a;
+    --surface2:#1c2040;
+    --border:#2a2e55;
+    --accent:#fbbf24;
+    --accent2:#a855f7;
+    --red:#e63c1e;
+    --blue:#2563eb;
+    --green:#16a34a;
+    --yellow:#ca8a04;
+    --text:#e8eaf0;
+    --muted:#8a90b0;
+    --glow:0 0 20px rgba(251,191,36,.25);
+  }
+  *{box-sizing:border-box;margin:0;padding:0;}
+  body{
+    background:var(--bg);
+    color:var(--text);
+    font-family:'Zen Kaku Gothic New',sans-serif;
+    font-size:15px;
+    line-height:1.7;
+    min-height:100vh;
+  }
+
+  /* ── 背景装飾 ── */
+  body::before{
+    content:'';
+    position:fixed;inset:0;z-index:0;
+    background:
+      radial-gradient(ellipse 60% 40% at 80% 10%, rgba(168,85,247,.12) 0%, transparent 60%),
+      radial-gradient(ellipse 50% 30% at 10% 80%, rgba(37,99,235,.1) 0%, transparent 60%);
+    pointer-events:none;
+  }
+
+  /* ── レイアウト ── */
+  .wrapper{
+    position:relative;z-index:1;
+    max-width:820px;
+    margin:0 auto;
+    padding:0 16px 80px;
+  }
+
+  /* ── ヘッダー ── */
+  header{
+    text-align:center;
+    padding:56px 0 40px;
+    border-bottom:1px solid var(--border);
+    margin-bottom:48px;
+  }
+  .game-title{
+    font-family:'Fredoka One',cursive;
+    font-size:clamp(36px,8vw,64px);
+    letter-spacing:.04em;
+    background:linear-gradient(135deg,#fbbf24 0%,#f59e0b 40%,#a855f7 80%,#7c3aed 100%);
+    -webkit-background-clip:text;
+    -webkit-text-fill-color:transparent;
+    background-clip:text;
+    text-shadow:none;
+    margin-bottom:8px;
+  }
+  .game-subtitle{
+    font-size:14px;
+    color:#b0b8d0;
+    letter-spacing:.15em;
+    text-transform:uppercase;
+  }
+
+  /* ── セクション ── */
+  section{
+    margin-bottom:48px;
+  }
+  .section-header{
+    display:flex;
+    align-items:center;
+    gap:12px;
+    margin-bottom:20px;
+    padding-bottom:12px;
+    border-bottom:1px solid var(--border);
+  }
+  .section-icon{
+    width:36px;height:36px;
+    background:linear-gradient(135deg,var(--accent2),#6d28d9);
+    border-radius:8px;
+    display:flex;align-items:center;justify-content:center;
+    font-size:18px;
+    flex-shrink:0;
+    box-shadow:0 0 12px rgba(168,85,247,.4);
+  }
+  h2{
+    font-family:'Fredoka One',cursive;
+    font-size:22px;
+    letter-spacing:.05em;
+    color:var(--accent);
+  }
+  h3{
+    font-size:15px;
+    font-weight:700;
+    color:var(--accent);
+    margin:20px 0 8px;
+    display:flex;align-items:center;gap:6px;
+  }
+  h3::before{
+    content:'';
+    display:inline-block;
+    width:4px;height:16px;
+    background:var(--accent);
+    border-radius:2px;
+  }
+
+  /* ── カード ── */
+  .card{
+    background:var(--surface);
+    border:1px solid var(--border);
+    border-radius:14px;
+    padding:18px 20px;
+    margin-bottom:12px;
+  }
+  .card-highlight{
+    border-color:rgba(251,191,36,.4);
+    background:linear-gradient(135deg,var(--surface) 0%,rgba(251,191,36,.05) 100%);
+  }
+
+  /* ── フェーズ流れ ── */
+  .phase-flow{
+    display:flex;
+    flex-wrap:wrap;
+    gap:8px;
+    align-items:center;
+    margin:12px 0;
+  }
+  .phase-step{
+    background:var(--surface2);
+    border:1px solid var(--border);
+    border-radius:20px;
+    padding:5px 14px;
+    font-size:13px;
+    font-weight:700;
+    white-space:nowrap;
+  }
+  .phase-arrow{
+    color:#b0b8d0;
+    font-size:14px;
+  }
+  .phase-step.active{
+    background:rgba(251,191,36,.15);
+    border-color:var(--accent);
+    color:var(--accent);
+  }
+
+  /* ── カード能力テーブル ── */
+  .card-grid{
+    display:grid;
+    gap:8px;
+  }
+  .card-row{
+    display:grid;
+    grid-template-columns:52px 1fr;
+    gap:12px;
+    align-items:start;
+    background:var(--surface);
+    border:1px solid var(--border);
+    border-radius:12px;
+    padding:12px 14px;
+    transition:border-color .2s;
+  }
+  .card-row:hover{border-color:rgba(251,191,36,.4);}
+  .card-num-badge{
+    width:44px;height:56px;
+    border-radius:8px;
+    display:flex;flex-direction:column;
+    align-items:center;justify-content:center;
+    font-family:'Fredoka One',cursive;
+    font-size:24px;
+    line-height:1;
+    border:2px solid rgba(255,255,255,.15);
+    flex-shrink:0;
+  }
+  .card-num-badge .num-icon{font-size:11px;margin-top:2px;opacity:.8;}
+  .card-row-body{}
+  .card-row-title{
+    font-weight:700;
+    font-size:14px;
+    margin-bottom:3px;
+    display:flex;align-items:center;gap:6px;flex-wrap:wrap;
+  }
+  .card-row-desc{
+    font-size:13px;
+    color:#b0b8d0;
+    line-height:1.6;
+  }
+  .tag{
+    display:inline-block;
+    padding:1px 7px;
+    border-radius:10px;
+    font-size:11px;
+    font-weight:700;
+    letter-spacing:.03em;
+  }
+  .tag-st{background:rgba(37,99,235,.3);color:#93c5fd;border:1px solid rgba(37,99,235,.5);}
+  .tag-blocker{background:rgba(22,163,74,.3);color:#86efac;border:1px solid rgba(22,163,74,.5);}
+  .tag-double{background:rgba(168,85,247,.3);color:#d8b4fe;border:1px solid rgba(168,85,247,.5);}
+  .tag-triple{background:rgba(230,60,30,.3);color:#fca5a5;border:1px solid rgba(230,60,30,.5);}
+  .tag-link{background:rgba(234,179,8,.2);color:#fde68a;border:1px solid rgba(234,179,8,.4);}
+  .tag-free{background:rgba(251,191,36,.2);color:#fbbf24;border:1px solid rgba(251,191,36,.4);}
+
+  /* ── 色バッジ ── */
+  .colors{
+    display:flex;gap:8px;flex-wrap:wrap;margin:10px 0;
+  }
+  .color-badge{
+    display:flex;align-items:center;gap:6px;
+    padding:5px 12px;
+    border-radius:20px;
+    font-weight:700;
+    font-size:13px;
+  }
+  .color-badge.red{background:rgba(220,38,38,.2);border:1px solid rgba(220,38,38,.4);color:#f87171;}
+  .color-badge.blue{background:rgba(37,99,235,.2);border:1px solid rgba(37,99,235,.4);color:#93c5fd;}
+  .color-badge.green{background:rgba(22,163,74,.2);border:1px solid rgba(22,163,74,.4);color:#86efac;}
+  .color-badge.yellow{background:rgba(202,138,4,.2);border:1px solid rgba(202,138,4,.4);color:#fde68a;}
+
+  /* ── リンク表 ── */
+  .link-table{
+    width:100%;border-collapse:collapse;font-size:13px;
+  }
+  .link-table th{
+    background:var(--surface2);
+    padding:8px 12px;
+    text-align:left;
+    font-weight:700;
+    color:#b0b8d0;
+    border-bottom:1px solid var(--border);
+  }
+  .link-table td{
+    padding:10px 12px;
+    border-bottom:1px solid rgba(42,46,85,.5);
+  }
+  .link-table tr:last-child td{border-bottom:none;}
+  .link-table tr:hover td{background:var(--surface2);}
+
+  /* ── ハイライトボックス ── */
+  .highlight-box{
+    background:linear-gradient(135deg,rgba(251,191,36,.08),rgba(168,85,247,.08));
+    border:1px solid rgba(251,191,36,.3);
+    border-radius:12px;
+    padding:16px 18px;
+    margin:12px 0;
+  }
+  .highlight-box.red{
+    background:rgba(220,38,38,.08);
+    border-color:rgba(220,38,38,.3);
+  }
+  .highlight-box.blue{
+    background:rgba(37,99,235,.08);
+    border-color:rgba(37,99,235,.3);
+  }
+  .highlight-box .title{
+    font-weight:900;
+    font-size:15px;
+    margin-bottom:6px;
+    display:flex;align-items:center;gap:8px;
+  }
+  .highlight-box.red .title{color:#f87171;}
+  .highlight-box.blue .title{color:#93c5fd;}
+
+  /* ── 番号リスト ── */
+  ol.rule-list{
+    list-style:none;
+    counter-reset:rule;
+  }
+  ol.rule-list li{
+    counter-increment:rule;
+    padding:8px 0 8px 40px;
+    position:relative;
+    border-bottom:1px solid rgba(42,46,85,.4);
+    font-size:14px;
+  }
+  ol.rule-list li:last-child{border-bottom:none;}
+  ol.rule-list li::before{
+    content:counter(rule);
+    position:absolute;left:0;top:8px;
+    width:26px;height:26px;
+    background:var(--surface2);
+    border:1px solid var(--border);
+    border-radius:50%;
+    display:flex;align-items:center;justify-content:center;
+    font-family:'Fredoka One',cursive;
+    font-size:12px;
+    color:var(--accent);
+    line-height:26px;
+    text-align:center;
+  }
+
+  /* ── エクTジアセクション ── */
+  .ext-colors{
+    display:flex;gap:10px;align-items:center;justify-content:center;
+    flex-wrap:wrap;
+    margin:16px 0;
+  }
+  .ext-card{
+    width:56px;height:76px;
+    border-radius:8px;
+    display:flex;flex-direction:column;
+    align-items:center;justify-content:center;
+    border:2px solid rgba(255,255,255,.2);
+    font-family:'Fredoka One',cursive;
+    font-size:28px;
+    position:relative;
+  }
+  .ext-card span{font-size:11px;opacity:.8;}
+  .ext-card.blue{background:#1d4ed8;}
+  .ext-card.green{background:#15803d;}
+  .ext-card.yellow{background:#b45309;color:#fff;}
+  .ext-card.red{background:#b91c1c;}
+  .ext-arrow{font-size:20px;color:var(--accent);}
+
+  /* ── フッター ── */
+  footer{
+    text-align:center;
+    color:#b0b8d0;
+    font-size:12px;
+    margin-top:64px;
+    padding-top:24px;
+    border-top:1px solid var(--border);
+    letter-spacing:.1em;
+  }
+
+  /* ── スクロールバー ── */
+  ::-webkit-scrollbar{width:6px;}
+  ::-webkit-scrollbar-track{background:var(--bg);}
+  ::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px;}
+
+  /* ── レスポンシブ ── */
+  @media(max-width:520px){
+    .card-row{grid-template-columns:44px 1fr;}
+    .card-num-badge{width:38px;height:48px;font-size:20px;}
+    .phase-flow{gap:4px;}
+    .phase-step{font-size:12px;padding:4px 10px;}
+  }
+</style>
+</head>
+<body>
+<div class="wrapper">
+
+  <header>
+    <div class="game-title">Tジマ</div>
+    <div class="game-subtitle">CARD GAME RULE BOOK</div>
+  </header>
+
+  <!-- ── 1. ゲーム概要 ── -->
+  <section>
+    <div class="section-header">
+      <div class="section-icon">📖</div>
+      <h2>ゲーム概要</h2>
+    </div>
+    <div class="card card-highlight">
+      2人対戦のカードゲームです。自分のデッキからカードを引き、マナを使って召喚し、相手の5枚のシールドをすべて割ってダイレクトアタックを決めれば勝利。または特定条件で<strong>エクTジア</strong>を宣言して即勝利を狙えます。
+    </div>
+    <div class="card">
+      <h3>色の種類</h3>
+      <div class="colors">
+        <div class="color-badge red">🔴 赤</div>
+        <div class="color-badge blue">🔵 青</div>
+        <div class="color-badge green">🟢 緑</div>
+        <div class="color-badge yellow">🟡 黄</div>
+      </div>
+    </div>
+    <div class="card">
+      <h3>デッキ構成</h3>
+      <p style="font-size:14px;">カード番号 <strong>0〜7</strong> が各4色 × 1枚ずつ（32枚）、<strong>8</strong>が赤・青の2枚、<strong>9</strong>が緑・黄の2枚。合計 <strong>36枚</strong> のデッキを使用します。</p>
+    </div>
+    <div class="card">
+      <h3>ゲーム開始時</h3>
+      <ol class="rule-list">
+        <li>各プレイヤーは山札から5枚をシールドゾーンに裏向きで置く</li>
+        <li>残った山札から5枚を手札として引く</li>
+        <li>先攻プレイヤーの1ターン目はドローなし</li>
+      </ol>
+    </div>
+  </section>
+
+  <!-- ── 2. ターンの流れ ── -->
+  <section>
+    <div class="section-header">
+      <div class="section-icon">🔄</div>
+      <h2>ターンの流れ</h2>
+    </div>
+    <div class="phase-flow">
+      <div class="phase-step active">① アンタップ</div>
+      <div class="phase-arrow">▶</div>
+      <div class="phase-step active">② ドロー</div>
+      <div class="phase-arrow">▶</div>
+      <div class="phase-step active">③ マナチャージ</div>
+      <div class="phase-arrow">▶</div>
+      <div class="phase-step active">④ 召喚</div>
+      <div class="phase-arrow">▶</div>
+      <div class="phase-step active">⑤ 攻撃</div>
+      <div class="phase-arrow">▶</div>
+      <div class="phase-step active">⑥ エンド</div>
+    </div>
+
+    <h3>① アンタップ</h3>
+    <p style="font-size:14px;">自分のフィールドとマナゾーンのカードをすべてアンタップ（横向き→縦向き）する。</p>
+
+    <h3>② ドロー</h3>
+    <p style="font-size:14px;">山札の一番上からカードを1枚引く。山札が0枚のときドローしようとすると<strong>敗北</strong>。</p>
+
+    <h3>③ マナチャージ</h3>
+    <p style="font-size:14px;">手札から1枚を選んでマナゾーンに置く（任意。置かなくてもよい）。</p>
+    <div class="highlight-box blue">
+      <div class="title">🌈 9のカードのチャージ</div>
+      <strong>9</strong>（緑・黄）をマナに置いた場合、<strong>マナ2枚分</strong>としてカウントされ、あらゆる色のコストに使える全色対応マナになる。
+    </div>
+
+    <h3>④ 召喚フェーズ</h3>
+    <p style="font-size:14px;">手札からカードを選んでフィールドに召喚できる。<strong>1ターンに何枚でも</strong>召喚可能。召喚コストはカード番号と同じ枚数のマナをタップして支払う。</p>
+    <div class="card" style="margin-top:12px;">
+      <strong style="font-size:13px;">召喚条件（色チェック）</strong>
+      <p style="font-size:13px;color:#b0b8d0;margin-top:4px;">マナゾーンに召喚するカードと<strong>同じ色</strong>が1枚以上あること（タップ済みでもOK）。ただし 9 がマナにあれば全色対応。</p>
+    </div>
+    <div class="card" style="margin-top:8px;">
+      <strong style="font-size:13px;">召喚酔い</strong>
+      <p style="font-size:13px;color:#b0b8d0;margin-top:4px;">召喚したターンは攻撃できない。ただし<strong>スピードアタッカー</strong>状態のカードは即攻撃可能。</p>
+    </div>
+    <div class="card" style="margin-top:8px;">
+      <strong style="font-size:13px;">リンク（召喚フェーズ中に実行可能）</strong>
+      <p style="font-size:13px;color:#b0b8d0;margin-top:4px;">条件を満たすペアが場にあれば「リンク」ボタンが表示される。リンクすると特殊効果が発動する。</p>
+    </div>
+    <div class="highlight-box" style="margin-top:8px;">
+      <div class="title">⭐ エクTジア宣言</div>
+      条件を満たしたとき召喚フェーズ中に「エクTジア宣言」ボタンが表示される。宣言するとチャレンジが開始される（詳細は後述）。
+    </div>
+
+    <h3>⑤ 攻撃フェーズ</h3>
+    <p style="font-size:14px;">フィールドのカードで相手を攻撃できる。1体ずつ選んで攻撃先を指定する。</p>
+    <ol class="rule-list" style="margin-top:10px;">
+      <li>攻撃するカードを選択して「攻撃」ボタンを押す</li>
+      <li>攻撃先を選ぶ：<strong>シールドを攻撃</strong> / <strong>タップされたナンバーズを攻撃</strong> / <strong>ダイレクトアタック</strong>（シールドが0のとき）</li>
+      <li>攻撃したカードはタップ状態になる</li>
+    </ol>
+
+    <div class="card" style="margin-top:12px;">
+      <strong style="font-size:13px;">ナンバーズへの攻撃（クリーチャーバトル）</strong>
+      <p style="font-size:13px;color:#b0b8d0;margin-top:4px;">相手のタップ済みカードのみ攻撃できる。バトルは<strong>カード番号の大小</strong>で勝敗が決まる（数字が大きい方が勝ち）。同数は相討ち（双方破壊）。敗北したカードは墓地に送られる。</p>
+    </div>
+
+    <div class="card" style="margin-top:8px;">
+      <strong style="font-size:13px;">ブロッカー</strong>
+      <p style="font-size:13px;color:#b0b8d0;margin-top:4px;"><strong>1</strong>・<strong>3</strong>（アンタップ状態）は攻撃に割り込んでブロックできる。ブロック時はクリーチャーバトルと同じく数字の大小で勝敗。ブロック側が任意。</p>
+    </div>
+
+    <div class="card" style="margin-top:8px;">
+      <strong style="font-size:13px;">ダイレクトアタック</strong>
+      <p style="font-size:13px;color:#b0b8d0;margin-top:4px;">相手のシールドが0枚になったとき、次の攻撃は<strong>ダイレクトアタック</strong>（直接攻撃）になる。アンタップのブロッカー（1・3）がいれば防御側がブロックを選択できる。ブロックされなければその時点で<strong>攻撃側の勝利</strong>。</p>
+    </div>
+  </section>
+
+  <!-- ── 3. シールドとST ── -->
+  <section>
+    <div class="section-header">
+      <div class="section-icon">🛡</div>
+      <h2>シールド＆シールドトリガー</h2>
+    </div>
+    <div class="card">
+      <p style="font-size:14px;">シールドが攻撃で割られると、そのカードは<strong>手札に加わる</strong>。ただし <strong>6</strong> または <strong>8</strong> のカードがシールドにある場合、<strong>シールドトリガー（ST）</strong>として無料で発動できる。</p>
+    </div>
+    <div class="highlight-box">
+      <div class="title">💥 シールドブレイク枚数</div>
+      <table class="link-table" style="margin-top:8px;">
+        <thead>
+          <tr><th>攻撃カード</th><th>割るシールド枚数</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>通常のカード</td><td>1枚</td></tr>
+          <tr><td><strong>7・9</strong>、5+5リンク</td><td>2枚（ダブルブレイカー）</td></tr>
+          <tr><td><strong>0</strong></td><td>3枚（トリプルブレイカー）</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="card" style="margin-top:12px;">
+      <strong style="font-size:13px;">STの処理順</strong>
+      <p style="font-size:13px;color:#b0b8d0;margin-top:4px;">複数のシールドが割れて複数のSTが発動した場合、防御側が1枚ずつ選んで順番に発動させる。</p>
+    </div>
+  </section>
+
+  <!-- ── 4. カード能力一覧 ── -->
+  <section>
+    <div class="section-header">
+      <div class="section-icon">🃏</div>
+      <h2>カード能力一覧</h2>
+    </div>
+    <div class="card-grid">
+
+      <div class="card-row">
+        <div class="card-num-badge" style="background:linear-gradient(135deg,#7c3aed,#4c1d95);color:#fff;">
+          0 <span class="num-icon">🔱</span>
+        </div>
+        <div class="card-row-body">
+          <div class="card-row-title">
+            <span>0（おTーじ様）</span>
+            <span class="tag tag-triple">トリプルブレイカー</span>
+            <span class="tag tag-free">コスト0</span>
+          </div>
+          <div class="card-row-desc">
+            常にコスト0・マナ色不問で召喚できる。攻撃するとシールドを<strong>3枚</strong>割る。<br>
+            手札＋フィールドに赤・青・緑・黄の0が全色揃うと<strong>エクTジア</strong>条件が成立する。<br>
+            5がフィールドにあれば0召喚時に墓地のカードをマナに戻せる（5+5リンクなら5枚）。
+          </div>
+        </div>
+      </div>
+
+      <div class="card-row">
+        <div class="card-num-badge" style="background:linear-gradient(135deg,#16a34a,#14532d);color:#fff;">
+          1 <span class="num-icon">🛡</span>
+        </div>
+        <div class="card-row-body">
+          <div class="card-row-title">
+            <span>1（竹村）</span>
+            <span class="tag tag-blocker">ブロッカー</span>
+          </div>
+          <div class="card-row-desc">
+            アンタップ状態のとき、相手の攻撃をブロックできる。数字の大小でバトル。
+          </div>
+        </div>
+      </div>
+
+      <div class="card-row">
+        <div class="card-num-badge" style="background:linear-gradient(135deg,#dc2626,#7f1d1d);color:#fff;">
+          2 <span class="num-icon">💥</span>
+        </div>
+        <div class="card-row-body">
+          <div class="card-row-title">
+            <span>2（平岡）</span>
+          </div>
+          <div class="card-row-desc">
+            <strong>召喚時：</strong>数字を宣言し、フィールド全体からその番号のカードをすべて破壊する。<br>
+            <strong>攻撃時：</strong>手札を1枚捨てて数字を宣言→全破壊後に通常攻撃できる。
+          </div>
+        </div>
+      </div>
+
+      <div class="card-row">
+        <div class="card-num-badge" style="background:linear-gradient(135deg,#2563eb,#1e3a8a);color:#fff;">
+          3 <span class="num-icon">🛡</span>
+        </div>
+        <div class="card-row-body">
+          <div class="card-row-title">
+            <span>3（和田）</span>
+            <span class="tag tag-blocker">ブロッカー</span>
+            <span class="tag tag-link">リンク可</span>
+          </div>
+          <div class="card-row-desc">
+            アンタップ状態のときブロック可能。同色の4とリンクできる（詳細は「リンク」セクション参照）。
+          </div>
+        </div>
+      </div>
+
+      <div class="card-row">
+        <div class="card-num-badge" style="background:linear-gradient(135deg,#ca8a04,#713f12);color:#fff;">
+          4 <span class="num-icon">⚡</span>
+        </div>
+        <div class="card-row-body">
+          <div class="card-row-title">
+            <span>4（古屋）</span>
+            <span class="tag tag-link">リンク可</span>
+          </div>
+          <div class="card-row-desc">
+            墓地に送られたとき、<strong>自分のマナゾーンに置かれる</strong>（墓地に行かない）。同色の3とリンクできる。
+          </div>
+        </div>
+      </div>
+
+      <div class="card-row">
+        <div class="card-num-badge" style="background:linear-gradient(135deg,#0891b2,#164e63);color:#fff;">
+          5 <span class="num-icon">📉</span>
+        </div>
+        <div class="card-row-body">
+          <div class="card-row-title">
+            <span>5（鳥越）</span>
+            <span class="tag tag-link">リンク可</span>
+          </div>
+          <div class="card-row-desc">
+            フィールドに存在するとき、自分の召喚コストを<strong>−1</strong>（最低コスト1）にする。<br>
+            同色の5同士でリンクすると、コストを<strong>−5</strong>（最低1）にする強力効果。<br>
+            0召喚時に5がいれば墓地から1枚マナへ（5+5リンク時は5枚）。
+          </div>
+        </div>
+      </div>
+
+      <div class="card-row">
+        <div class="card-num-badge" style="background:linear-gradient(135deg,#a855f7,#581c87);color:#fff;">
+          6 <span class="num-icon">✨</span>
+        </div>
+        <div class="card-row-body">
+          <div class="card-row-title">
+            <span>6（渡辺）</span>
+            <span class="tag tag-st">シールドトリガー</span>
+          </div>
+          <div class="card-row-desc">
+            <strong>召喚時 / ST発動時：</strong>相手フィールドのカードを1枚選んで手札に戻す。<br>
+            リンクペアを対象にした場合は、そのカードの<strong>持ち主</strong>がどちらを手札に戻すか選択し、残った1枚はリンク解除されてフィールドにそのまま残る。
+          </div>
+        </div>
+      </div>
+
+      <div class="card-row">
+        <div class="card-num-badge" style="background:linear-gradient(135deg,#0f766e,#134e4a);color:#fff;">
+          7 <span class="num-icon">🔀</span>
+        </div>
+        <div class="card-row-body">
+          <div class="card-row-title">
+            <span>7（高瀬）</span>
+            <span class="tag tag-double">ダブルブレイカー</span>
+          </div>
+          <div class="card-row-desc">
+            攻撃するとシールドを<strong>2枚</strong>割る。<br>
+            <strong>召喚時：</strong>任意のカード1枚を任意のゾーンへ移動できる。対象は自分・相手どちらのカードでも可。ただし<strong>相手のカードは相手のゾーンにのみ</strong>移動できる。移動先はフィールド・手札・マナ・シールド（裏）・デッキ上（裏）・墓地から選択。フィールドに移動したカードの召喚時効果は発動する。
+          </div>
+        </div>
+      </div>
+
+      <div class="card-row">
+        <div class="card-num-badge" style="background:linear-gradient(135deg,#e63c1e,#7f1d1d);color:#fff;">
+          8 <span class="num-icon">📜</span>
+        </div>
+        <div class="card-row-body">
+          <div class="card-row-title">
+            <span>8（片スパ）</span>
+            <span class="tag tag-st">シールドトリガー</span>
+          </div>
+          <div class="card-row-desc">
+            コスト4。召喚 / ST発動時、相手フィールドのカードをすべて<strong>タップ</strong>する。自身はフィールドに残らず<strong>墓地</strong>に送られる（呪文として扱う）。赤・青の2種のみ存在。
+          </div>
+        </div>
+      </div>
+
+      <div class="card-row">
+        <div class="card-num-badge" style="background:linear-gradient(135deg,#15803d,#052e16);color:#fff;">
+          9 <span class="num-icon">🌈</span>
+        </div>
+        <div class="card-row-body">
+          <div class="card-row-title">
+            <span>9（ベルト）</span>
+            <span class="tag tag-double">ダブルブレイカー</span>
+          </div>
+          <div class="card-row-desc">
+            攻撃するとシールドを<strong>2枚</strong>割る。<br>
+            マナゾーンに置いた場合、<strong>マナ2枚分 + 全色対応</strong>として機能する。緑・黄の2種のみ存在。
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ── 5. リンク ── -->
+  <section>
+    <div class="section-header">
+      <div class="section-icon">🔗</div>
+      <h2>リンク</h2>
+    </div>
+    <p style="font-size:14px;margin-bottom:16px;">召喚フェーズ中、条件を満たすカードがフィールドに揃ったとき「リンク」ボタンが表示される。リンクすると2枚が1体として扱われ特殊効果が発動する。</p>
+
+    <table class="link-table">
+      <thead>
+        <tr><th>リンク条件</th><th>効果</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>同色の 3 + 4</strong></td>
+          <td>リンク成立時、<strong>自分フィールド全カードがスピードアタッカー</strong>になる（召喚酔いなし）。リンク後も場にある限り新たに召喚したカードも即攻撃可能。</td>
+        </tr>
+        <tr>
+          <td><strong>5 + 5（同色）</strong></td>
+          <td>召喚コストを<strong>−5</strong>（最低1）に引き下げる。0召喚時に墓地から5枚マナへ戻せる。</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="card" style="margin-top:16px;">
+      <strong style="font-size:13px;">リンクペアと攻撃</strong>
+      <p style="font-size:13px;color:#b0b8d0;margin-top:4px;">リンクペアは数字の小さい方（root側）を選んで攻撃する。攻撃・タップ時はペア両方がタップされる。ブレイカー数はroot側カードの能力に準じる（5は通常、9とリンクした場合はダブル）。</p>
+    </div>
+
+    <div class="card" style="margin-top:8px;">
+      <strong style="font-size:13px;">リンクペアが破壊・除去されたとき</strong>
+      <p style="font-size:13px;color:#b0b8d0;margin-top:4px;">リンクが攻撃で破壊された場合、ペアの持ち主が<strong>どちらか1枚を選んで破壊</strong>し、もう1枚はリンク解除されてフィールドに残る（タップ状態そのまま）。6の効果で手札に戻す場合は持ち主がどちらを手札に戻すか選び、残った方はフィールドに残る。</p>
+    </div>
+  </section>
+
+  <!-- ── 6. コスト計算 ── -->
+  <section>
+    <div class="section-header">
+      <div class="section-icon">💰</div>
+      <h2>召喚コスト</h2>
+    </div>
+    <div class="card">
+      <p style="font-size:14px;">基本コスト＝カードの番号。5の効果で軽減される。</p>
+      <table class="link-table" style="margin-top:12px;">
+        <thead>
+          <tr><th>条件</th><th>コスト軽減</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>フィールドに 5 が1枚以上いる</td><td>−1（最低1）</td></tr>
+          <tr><td>5+5 リンクがフィールドにいる</td><td>−5（最低1）</td></tr>
+          <tr><td>0（おTーじ様）</td><td>常にコスト0・色不問</td></tr>
+          <tr><td>8（片スパ）</td><td>常にコスト4固定</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="card" style="margin-top:8px;">
+      <strong style="font-size:13px;">マナの使い方</strong>
+      <p style="font-size:13px;color:#b0b8d0;margin-top:4px;">必要コスト分のマナカードをタップして支払う。9はタップで2マナ分扱い。支払ったマナはターン終了後のアンタップフェーズに戻る。</p>
+    </div>
+  </section>
+
+  <!-- ── 7. エクTジア ── -->
+  <section>
+    <div class="section-header">
+      <div class="section-icon">⭐</div>
+      <h2>エクTジア（特殊勝利）</h2>
+    </div>
+    <div class="highlight-box">
+      <div class="title">⭐ 発動条件</div>
+      自分の<strong>手札＋フィールド</strong>に <strong>赤0・青0・緑0・黄0</strong> の4色すべての0が揃ったとき、召喚フェーズ中に「エクTジア宣言」ボタンが出現する。
+    </div>
+
+    <h3>チャレンジの流れ</h3>
+    <ol class="rule-list">
+      <li>宣言すると4枚の0カードが表示される（シャッフルされた順番で）</li>
+      <li>正しい順番（<strong>青 → 緑 → 黄 → 赤</strong>）でタップしていく</li>
+      <li>4枚すべて正解で<strong>即勝利</strong></li>
+      <li>間違えた場合は<strong>即敗北</strong>（相手の勝利）</li>
+    </ol>
+
+    <div class="ext-colors">
+      <div class="ext-card blue">0<span>青</span></div>
+      <div class="ext-arrow">→</div>
+      <div class="ext-card green">0<span>緑</span></div>
+      <div class="ext-arrow">→</div>
+      <div class="ext-card yellow">0<span>黄</span></div>
+      <div class="ext-arrow">→</div>
+      <div class="ext-card red">0<span>赤</span></div>
+    </div>
+
+    <div class="highlight-box red" style="margin-top:8px;">
+      <div class="title">⚠ 注意</div>
+      宣言は任意。「やっぱりやめる」で取り消しも可能。ただし宣言してチャレンジを始めた後は取り消し不可。
+    </div>
+  </section>
+
+  <!-- ── 8. 勝利・敗北条件 ── -->
+  <section>
+    <div class="section-header">
+      <div class="section-icon">🏆</div>
+      <h2>勝利・敗北条件</h2>
+    </div>
+    <table class="link-table">
+      <thead>
+        <tr><th>条件</th><th>結果</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>相手のシールドが0枚の状態でダイレクトアタックが通る</td><td>攻撃側の勝利</td></tr>
+        <tr><td>エクTジアチャレンジ成功</td><td>宣言者の勝利</td></tr>
+        <tr><td>エクTジアチャレンジ失敗</td><td>宣言者の敗北</td></tr>
+        <tr><td>ドロー時に山札が0枚</td><td>ドローしようとしたプレイヤーの敗北</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <!-- ── 9. オンライン対戦 ── -->
+  <section>
+    <div class="section-header">
+      <div class="section-icon">🌐</div>
+      <h2>オンライン対戦</h2>
+    </div>
+    <div class="card">
+      <ol class="rule-list">
+        <li>タイトル画面でログイン（Googleアカウント）する</li>
+        <li>ルームIDを決めて「ルームに参加」。相手も同じIDで入室</li>
+        <li>P1が先攻、P2が後攻。各自のスマホで操作する</li>
+        <li>自分のターン中のみボタンが操作可能。相手のターンは待機表示になる</li>
+        <li>勝敗は自動的に戦績（勝ち数 / 負け数）に記録される</li>
+      </ol>
+    </div>
+  </section>
+
+  <footer>
+    Tジマ カードゲーム ルールブック
+  </footer>
+</div>
+</body>
+</html>
