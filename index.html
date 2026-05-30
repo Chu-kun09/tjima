@@ -242,6 +242,12 @@ html,body{width:100%;height:100dvh;overflow:hidden;background:var(--bg);color:#e
   border:1px solid rgba(255,255,255,.15);
 }
 #title-local-btn:hover{filter:brightness(1.15);box-shadow:0 8px 32px rgba(147,51,234,.7);}
+#title-cpu-btn{
+  background:linear-gradient(135deg,#16a34a 0%,#0f766e 100%);
+  color:#fff;box-shadow:0 6px 24px rgba(22,163,74,.45);
+  border:1px solid rgba(255,255,255,.15);
+}
+#title-cpu-btn:hover{filter:brightness(1.15);box-shadow:0 8px 32px rgba(22,163,74,.7);}
 #title-online-btn{
   background:linear-gradient(135deg,#0ea5e9 0%,#0065b3 100%);
   color:#fff;box-shadow:0 6px 24px rgba(14,165,233,.45);
@@ -312,6 +318,7 @@ getRedirectResult(auth).then(result=>{
     </div>
     <div id="title-buttons">
       <button class="title-btn" id="title-local-btn">⚔ ローカル対戦</button>
+      <button class="title-btn" id="title-cpu-btn">🤖 CPU対戦</button>
       <button class="title-btn" id="title-online-btn">🌐 オンライン対戦</button>
       <button class="title-btn title-btn-sub" id="title-profile-btn">👤 プロフィール</button>
       <button class="title-btn title-btn-sub" id="title-rulebook-btn" onclick="window.open('rulebook.html','_blank')">📖 ルールブック</button>
@@ -3935,6 +3942,586 @@ window.closeModal=closeModal;
 // showTitleScreen または showLoginScreen を呼ぶので
 // ここでは何もしない
 // （_fbReadyのthen内でonAuthStateChangedが設定される）
+</script>
+<!-- ═══════════════════════════════════════════════════════════════════
+     CPU 対戦モジュール（思考ルーチン + 統合ループ + モーダル自動化）
+     既存スクリプトの後に読み込むこと。G などのグローバルを共有する。
+═══════════════════════════════════════════════════════════════════ -->
+<script>
+'use strict';
+
+/* ════════════════ 1. CPU 状態 ════════════════ */
+const CPU = { enabled:false, player:2, _plan:null, _7plan:null, busy:false };
+function isCpu(p){ return CPU.enabled && !ONLINE.enabled && parseInt(p)===CPU.player; }
+
+/* ════════════════ 2. スコアリング用の重み ════════════════ */
+const CPU_W = {
+  body:0.6, breaker:3.0, aggro:4.0, removal:1.4, blocker:2.5, defenseNeed:3.0,
+  link:4.0, costEff:0.25, freeBonus:3.0, extjia:6.0, manaHit:0.5, sevenChain:5.0,
+  mana4:1.5, atkShield:4.0, atkAggro:5.0, stRisk:0.6, defShield:3.0,
+};
+
+/* ════════════════ 3. 盤面評価・共通ヘルパー ════════════════ */
+function cpuEvalBoard(p){
+  const opp=(p===1)?2:1, me=G.players[p], en=G.players[opp];
+  const enUnits=en.field.filter(c=>!c.linkedWith||c.linkRoot);
+  const oppUntappedBlockers=enUnits.filter(c=>(c.num===1||c.num===3)&&!c.tapped);
+  const oppBiggest=enUnits.reduce((m,c)=>Math.max(m,getAtkPower(c)),0);
+  const myShields=me.shields.filter(Boolean).length;
+  const oppShields=en.shields.filter(Boolean).length;
+  const aggro=Math.min(1,(5-oppShields)/5+(oppShields===0?0.3:0));
+  const enemyThreatens=enUnits.length>0;
+  const defenseNeed=((5-myShields)/5)*(enemyThreatens?1:0.3);
+  return {p,opp,me,en,enUnits,myShields,oppShields,oppCreatureCount:enUnits.length,
+          oppUntappedBlockers,oppBiggest,aggro,defenseNeed,avail:availMana(p)};
+}
+function cpuRemovalValue(card){
+  let v=getAtkPower(card);
+  if(card.num===1||card.num===3)v+=2;
+  if(card.linkedWith)v+=2;
+  return v;
+}
+function cpuBreakerCount(card){
+  if(card.num===0)return 3;
+  if(card.num===7||card.num===9)return 2;
+  return 1;
+}
+function cpuHirabonBest(ctx){
+  const {me,en}=ctx; let best={num:0,gain:-Infinity};
+  for(let n=0;n<=9;n++){
+    let oppLoss=0,myLoss=0;
+    en.field.forEach(c=>{if(c.num===n)oppLoss+=cpuRemovalValue(c);});
+    en.mana .forEach(c=>{if(c.num===n)oppLoss+=cpuRemovalValue(c)*CPU_W.manaHit;});
+    me.field.forEach(c=>{if(c.num===n)myLoss+=cpuRemovalValue(c);});
+    me.mana .forEach(c=>{if(c.num===n)myLoss+=cpuRemovalValue(c)*CPU_W.manaHit;});
+    if(n===2)myLoss+=2;
+    const gain=oppLoss-myLoss;
+    if(gain>best.gain)best={num:n,gain};
+  }
+  return best;
+}
+
+/* ════════════════ 4. 召喚カードのスコアリング ════════════════ */
+function cpuScoreCard(p,card,ctx){
+  if(!canSummon(p,card))return {score:-Infinity,plan:null};
+  const cost=getSummonCost(p,card);
+  let score=0; const plan={cardId:card.id};
+  if(card.num!==8)score+=getAtkPower(card)*CPU_W.body;
+  const willHaveSpeed=ctx.me.field.some(c=>c.linkedWith&&((c.num===3&&c.linkedWith.num===4)||(c.num===4&&c.linkedWith.num===3)));
+  const breakDelay=willHaveSpeed?1.0:0.5;
+  if(card.num!==8){
+    const bc=cpuBreakerCount(card);
+    score+=bc*CPU_W.breaker*breakDelay;
+    score+=bc*ctx.aggro*CPU_W.aggro;
+  }
+  switch(card.num){
+    case 0:{
+      score+=CPU_W.freeBonus;
+      const zc=new Set([...ctx.me.hand,...ctx.me.field].filter(c=>c.num===0).map(c=>c.color));
+      if(!zc.has(card.color)){
+        const after=zc.size+1;
+        if(after>=4)score+=CPU_W.extjia*2; else score+=CPU_W.extjia*(after/4);
+      }
+      if(ctx.me.field.some(c=>c.num===5)&&ctx.me.graveyard.length)score+=1.5;
+      break;
+    }
+    case 1: score+=CPU_W.blocker*(0.4+ctx.defenseNeed); break;
+    case 2:{
+      const b=cpuHirabonBest(ctx); plan.declareNum=b.num;
+      score+=Math.max(0,b.gain)*CPU_W.removal;
+      if(b.gain<=0)score-=1.5;
+      break;
+    }
+    case 3:{
+      score+=CPU_W.blocker*(0.5+ctx.defenseNeed);
+      const can=ctx.me.field.some(c=>c.num===4&&c.color===card.color&&!c.linkedWith)||ctx.me.hand.some(c=>c.num===4&&c.color===card.color);
+      if(can)score+=CPU_W.link; break;
+    }
+    case 4:{
+      score+=1.0;
+      const can=ctx.me.field.some(c=>c.num===3&&c.color===card.color&&!c.linkedWith)||ctx.me.hand.some(c=>c.num===3&&c.color===card.color);
+      if(can)score+=CPU_W.link; break;
+    }
+    case 5:{
+      const heavy=ctx.me.hand.filter(c=>c.num>=5&&c.num!==card.num).length;
+      score+=heavy*1.5;
+      const can=ctx.me.field.some(c=>c.num===5&&c.color===card.color&&!c.linkedWith)||ctx.me.hand.some(c=>c.num===5&&c.color===card.color&&c.id!==card.id);
+      if(can)score+=CPU_W.link; break;
+    }
+    case 6:{
+      if(ctx.enUnits.length){
+        const t=ctx.enUnits.reduce((a,b)=>cpuRemovalValue(a)>=cpuRemovalValue(b)?a:b);
+        plan.bounceTargetId=t.id; score+=cpuRemovalValue(t)*CPU_W.removal;
+      }else score-=1.0;
+      break;
+    }
+    case 7:{
+      const others=[...ctx.me.hand.filter(c=>c.num===7&&c.id!==card.id),
+                    ...ctx.me.mana.filter(c=>c.num===7),
+                    ...ctx.me.graveyard.filter(c=>c.num===7)];
+      if(others.length){
+        plan.chain7Ids=others.map(c=>c.id);
+        const per=getAtkPower(card)*CPU_W.body+2*CPU_W.breaker*breakDelay+CPU_W.sevenChain;
+        score+=others.length*per;
+      }
+      if(ctx.enUnits.length){
+        const t=ctx.enUnits.reduce((a,b)=>cpuRemovalValue(a)>=cpuRemovalValue(b)?a:b);
+        plan.finalMoveTargetId=t.id; score+=cpuRemovalValue(t)*CPU_W.removal*1.2;
+      }
+      break;
+    }
+    case 8:{
+      const untapped=ctx.enUnits.filter(c=>!c.tapped);
+      score+=untapped.length*2.0;
+      score+=ctx.oppUntappedBlockers.length*2.0;
+      const myAtk=ctx.me.field.filter(c=>!c.summonedThisTurn||c.speedAttacker).length;
+      score+=myAtk*ctx.aggro*2.0;
+      if(untapped.length===0)score-=2.0;
+      break;
+    }
+    case 9: score+=ctx.aggro*3.0; break;
+  }
+  score-=cost*CPU_W.costEff;
+  return {score,plan,cost};
+}
+function cpuChooseBestPlay(p,minScore=0.5){
+  const ctx=cpuEvalBoard(p); let best=null;
+  for(const card of G.players[p].hand){
+    const r=cpuScoreCard(p,card,ctx);
+    if(r.score===-Infinity)continue;
+    if(!best||r.score>best.score)best={card,score:r.score,plan:r.plan,cost:r.cost};
+  }
+  if(!best||best.score<minScore)return null;
+  return best;
+}
+
+/* ════════════════ 5. マナチャージ ════════════════ */
+function cpuKeepValue(p,card,ctx){
+  let v;
+  switch(card.num){
+    case 0: v=100; break;
+    case 7:{ v=8; const o=G.players[p].hand.filter(c=>c.num===7&&c.id!==card.id).length; if(o)v+=6; break; }
+    case 9: v=6; break;
+    case 8: v=4; break;
+    case 6: v=4; break;
+    case 5: v=G.players[p].field.some(c=>c.num===5)?2:4; break;
+    case 2: v=3; break;
+    case 4: v=2.5; break;
+    case 3: v=2+ctx.defenseNeed*2; break;
+    case 1: v=1.5+ctx.defenseNeed*2; break;
+    default: v=card.num*0.5;
+  }
+  return v;
+}
+function cpuManaUtility(p,card,ctx){
+  const me=G.players[p]; let v=1;
+  if(card.num===9)v+=1.5;
+  if(card.num===4)v+=CPU_W.mana4;
+  const has9=me.mana.some(c=>c.num===9);
+  if(!has9){
+    const haveColor=me.mana.some(c=>c.color===card.color);
+    const want=me.hand.some(c=>c.color===card.color&&c.id!==card.id&&c.num!==0);
+    if(!haveColor&&want)v+=3;
+  }
+  return v;
+}
+function cpuChooseManaCharge(p,opts={}){
+  const ctx=cpuEvalBoard(p), me=G.players[p], hand=me.hand;
+  if(!hand.length)return null;
+  const cur=totalMana(p);
+  const wantCosts=hand.map(c=>(c.num===8?4:c.num===0?0:c.num));
+  const target=Math.max(4,Math.min(9,Math.max(0,...wantCosts)));
+  const need=Math.max(0,target-cur);
+  const urgency=need>0?1+need*0.4:0.5;
+  const hf=Math.min(1.5,hand.length/4);
+  let best=null;
+  for(const card of hand){
+    const keep=cpuKeepValue(p,card,ctx), util=cpuManaUtility(p,card,ctx);
+    const cs=util*urgency*hf-keep;
+    if(!best||cs>best.chargeScore)best={card,chargeScore:cs,keep,util};
+  }
+  const th=(opts.skipThreshold!==undefined)?opts.skipThreshold:0;
+  if(!best||best.chargeScore<th)return null;
+  return best;
+}
+
+/* ════════════════ 6. 攻撃 ════════════════ */
+function cpuMaxBlockerPower(ctx){ return ctx.oppUntappedBlockers.reduce((m,c)=>Math.max(m,getAtkPower(c)),0); }
+function cpuHasLethal(p,ctx){
+  if(ctx.oppUntappedBlockers.length>0)return false;
+  const attackers=ctx.me.field.filter(c=>canAttack(p,c)).sort((a,b)=>cpuBreakerCount(b)-cpuBreakerCount(a));
+  if(!attackers.length)return false;
+  let need=ctx.oppShields,used=0;
+  for(const a of attackers){ if(need<=0)break; need-=cpuBreakerCount(a); used++; }
+  if(need>0)return false;
+  const leftover=attackers.length-used;
+  return ctx.oppShields===0?attackers.length>=1:leftover>=1;
+}
+function cpuScoreAttack(p,atk,target,ctx){
+  const aPow=getAtkPower(atk), br=cpuBreakerCount(atk), maxBlk=cpuMaxBlockerPower(ctx);
+  if(target.type==='creature'){
+    const tPow=getAtkPower(target.card);
+    if(aPow>tPow)return cpuRemovalValue(target.card)*CPU_W.removal;
+    if(aPow===tPow)return cpuRemovalValue(target.card)*CPU_W.removal-aPow*CPU_W.body;
+    return -Infinity;
+  }
+  if(target.type==='shield'){
+    if(maxBlk>=aPow)return (maxBlk>aPow)?-aPow*CPU_W.body:-0.5;
+    const broken=Math.min(br,ctx.oppShields);
+    let s=broken*(CPU_W.atkShield+ctx.aggro*CPU_W.atkAggro);
+    s-=CPU_W.stRisk; return s;
+  }
+  if(target.type==='direct'){
+    if(maxBlk===0)return Infinity;
+    if(maxBlk>=aPow)return -aPow*CPU_W.body;
+    return cpuRemovalValue(ctx.oppUntappedBlockers.reduce((a,b)=>getAtkPower(a)>=getAtkPower(b)?a:b))*CPU_W.removal;
+  }
+  return -Infinity;
+}
+function cpuChooseAttack(p,minScore=0.01){
+  const ctx=cpuEvalBoard(p);
+  const attackers=ctx.me.field.filter(c=>canAttack(p,c));
+  if(!attackers.length)return null;
+  const oppTapped=ctx.en.field.filter(c=>c.tapped&&(!c.linkedWith||c.linkRoot));
+  const targets=[];
+  if(ctx.oppShields>0)targets.push({type:'shield'}); else targets.push({type:'direct'});
+  oppTapped.forEach(c=>targets.push({type:'creature',card:c}));
+  let best=null;
+  for(const atk of attackers)for(const t of targets){
+    const score=cpuScoreAttack(p,atk,t,ctx);
+    if(score===-Infinity)continue;
+    if(!best||score>best.score||(score===best.score&&getAtkPower(atk)<getAtkPower(best.attacker)))
+      best={attacker:atk,target:t,score};
+  }
+  if(!best||best.score<minScore)return null;
+  return best;
+}
+
+/* ════════════════ 7. 防御 ════════════════ */
+function cpuChooseBlock(p,atk,blockers,opts={}){
+  if(!blockers||!blockers.length)return {block:false};
+  const isDirect=!!opts.isDirect, aPow=getAtkPower(atk), breakers=cpuBreakerCount(atk);
+  const myShields=G.players[p].shields.filter(Boolean).length;
+  const shieldsSaved=isDirect?0:Math.min(breakers,myShields);
+  const sv=CPU_W.defShield;
+  let best={block:false,blocker:null,value:isDirect?-Infinity:0};
+  for(const B of blockers){
+    const bPow=getAtkPower(B); let value;
+    if(bPow>aPow)value=cpuRemovalValue(atk)*CPU_W.removal+shieldsSaved*sv;
+    else if(bPow===aPow)value=cpuRemovalValue(atk)*CPU_W.removal+shieldsSaved*sv-cpuRemovalValue(B);
+    else value=shieldsSaved*sv-cpuRemovalValue(B);
+    if(isDirect)value+=9999;
+    const better=value>best.value||(value===best.value&&best.blocker&&cpuRemovalValue(B)<cpuRemovalValue(best.blocker));
+    if(!best.block?value>best.value:better)best={block:true,blocker:B,value};
+  }
+  if(!isDirect&&(!best.block||best.value<=0))return {block:false};
+  return best;
+}
+function cpuChooseSTPlan(p){
+  const opp=(p===1)?2:1, sts=G.pendingST.filter(s=>s.player===p), plan=[];
+  const oppCanAttack=G.players[opp].field.some(c=>!c.tapped&&(!c.linkedWith||c.linkRoot));
+  sts.filter(s=>s.card.num===8).forEach(s=>plan.push({id:s.card.id,action:oppCanAttack?'activate':'hand'}));
+  sts.filter(s=>s.card.num===6).forEach(s=>plan.push({id:s.card.id,action:'activate'}));
+  sts.filter(s=>s.card.num!==6&&s.card.num!==8).forEach(s=>plan.push({id:s.card.id,action:'hand'}));
+  return plan;
+}
+function cpuChoose6Bounce(p,targets){
+  if(!targets||!targets.length)return null;
+  return targets.reduce((a,b)=>cpuRemovalValue(a)>=cpuRemovalValue(b)?a:b);
+}
+
+/* ════════════════ 8. 統合ループ（CPU=P2 の手番） ════════════════ */
+function cpuFindCardZone(p,id){
+  for(const z of ['hand','mana','graveyard']){
+    const c=G.players[p][z].find(x=>x.id===id);
+    if(c)return {card:c,zone:z};
+  }
+  return null;
+}
+function cpuPayMana(p,cost){
+  if(cost<=0)return;
+  const un=G.players[p].mana.filter(c=>!c.tapped).sort((a,b)=>(a.num===9?2:1)-(b.num===9?2:1));
+  let paid=0;
+  for(const m of un){ if(paid>=cost)break; m.tapped=true; paid+=(m.num===9?2:1); }
+}
+function cpuTryLinks(p){
+  const f=G.players[p].field.filter(c=>!c.linkedWith);
+  for(let i=0;i<f.length;i++)for(let j=i+1;j<f.length;j++){
+    if(validLink(f[i],f[j])){ doLink(f[i],f[j],p); return true; }
+  }
+  return false;
+}
+// 召喚1手
+function cpuSummonStep(p){
+  if(G.gameOver)return;
+  // エクTジア成立なら即勝利（CPUは正しい順を知っている）
+  if(hasExTjia(p)){ toast('CPU: ⭐エクTジア宣言！'); setTimeout(()=>winGame(p,'エクTジア！（0の4色）'),900); return; }
+  if(cpuTryLinks(p))return;                          // リンク（doLinkがphaseSummonを再呼び出し）
+  const pick=cpuChooseBestPlay(p);
+  if(pick){ cpuExecSummon(p,pick); return; }
+  setTimeout(()=>{ if(!G.gameOver) phaseAttack(); },350); // 召喚終了 → 攻撃へ
+}
+function cpuExecSummon(p,pick){
+  const card=pick.card;
+  CPU._plan=pick.plan||null;
+  if(card.num===7) CPU._7plan={chain:[...(pick.plan&&pick.plan.chain7Ids||[])],final:(pick.plan&&pick.plan.finalMoveTargetId!=null)?pick.plan.finalMoveTargetId:null};
+  const cost=getSummonCost(p,card);
+  cpuPayMana(p,cost);
+  toast(`CPU: ${CJ[card.color]}${card.num} を召喚`);
+  setTimeout(()=>{ if(!G.gameOver) completeSummon(p,card); },500);
+}
+// 攻撃1手
+function cpuAttackStep(p){
+  if(G.gameOver)return;
+  const a=cpuChooseAttack(p);
+  if(!a){ setTimeout(()=>{ if(!G.gameOver) endTurn(); },300); return; }
+  const atk=a.attacker, opp=p===1?2:1;
+  G.atkCard=null;
+  toast(`CPU: ${CJ[atk.color]}${atk.num} で攻撃`);
+  setTimeout(()=>{
+    if(G.gameOver)return;
+    if(a.target.type==='shield') execShieldAttack(atk,p);
+    else if(a.target.type==='direct'){
+      const bl=G.players[opp].field.filter(c=>(c.num===1||c.num===3)&&!c.tapped&&(!c.linkedWith||c.linkRoot));
+      execDirectWithBlock(atk,p,bl);
+    }else{
+      const t=G.players[opp].field.find(c=>c.id===a.target.card.id);
+      if(t)execCreatureAttack(atk,t,p); else setTimeout(()=>cpuAttackStep(p),100);
+    }
+  },550);
+}
+
+/* ════════════════ 9. 既存関数のCPU対応パッチ ════════════════ */
+// --- ターン進行フック ---
+const _origPhaseUntap=phaseUntap;
+phaseUntap=function(){
+  _origPhaseUntap.apply(this,arguments);
+  if(!G.gameOver && isCpu(G.turn)){ setBar(`🤖 CPUのターン`,[]); setTimeout(phaseDraw,800); }
+};
+const _origPhaseCharge=phaseCharge;
+phaseCharge=function(){
+  if(!G.gameOver && isCpu(G.turn)){
+    G.phase='charge'; G.selCard=null; renderAll();
+    const ch=cpuChooseManaCharge(G.turn);
+    if(ch){ toast(`CPU: ${CJ[ch.card.color]}${ch.card.num} をチャージ`); G.selCard=ch.card; setTimeout(doCharge,600); }
+    else setTimeout(phaseSummon,600);
+    return;
+  }
+  _origPhaseCharge.apply(this,arguments);
+};
+const _origPhaseSummon=phaseSummon;
+phaseSummon=function(){
+  if(!G.gameOver && isCpu(G.turn)){ G.phase='summon'; G.selCard=null; G.selMana=[]; renderAll(); setTimeout(()=>cpuSummonStep(G.turn),300); return; }
+  _origPhaseSummon.apply(this,arguments);
+};
+const _origPhaseAttack=phaseAttack;
+phaseAttack=function(){
+  if(!G.gameOver && isCpu(G.turn)){ G.phase='attack'; G.selCard=null; G.atkCard=null; renderAll(); setTimeout(()=>cpuAttackStep(G.turn),300); return; }
+  _origPhaseAttack.apply(this,arguments);
+};
+
+// --- 召喚時効果（CPUが召喚した場合は自動解決） ---
+const _origHirabonDeclare=showHirabonDeclareModal;
+showHirabonDeclareModal=function(p,isAttack,atkCardRef){
+  if(isCpu(p) && !isAttack){
+    const num=(CPU._plan&&CPU._plan.declareNum!=null)?CPU._plan.declareNum:cpuHirabonBest(cpuEvalBoard(p)).num;
+    const opp=p===1?2:1;
+    toast(`CPU: ヒラボン宣言 → ${num}`);
+    destroyByNum(p,num); destroyByNum(opp,num); fxHirabon(p,num); renderAll();
+    checkExTjia(p); setTimeout(()=>{ if(G.phase==='summon')phaseSummon(); },500);
+    return;
+  }
+  _origHirabonDeclare.apply(this,arguments);
+};
+const _orig6Bounce=show6BounceModal;
+show6BounceModal=function(p){
+  if(isCpu(p)){
+    const opp=p===1?2:1;
+    const targets=G.players[opp].field.filter(c=>!c.linkedWith||c.linkRoot);
+    const t=(CPU._plan&&CPU._plan.bounceTargetId!=null)?targets.find(c=>c.id===CPU._plan.bounceTargetId):null;
+    const chosen=t||cpuChoose6Bounce(p,targets);
+    if(!chosen){ after6Bounce(p); return; }
+    if(chosen.linkedWith&&chosen.linkRoot){ show6LinkedChoiceModal(p,opp,chosen,chosen.linkedWith); return; }
+    chosen.linkRoot=false; chosen.tapped=false;
+    G.players[opp].field=G.players[opp].field.filter(c=>c.id!==chosen.id);
+    G.players[opp].hand.push(chosen);
+    fxEffect(p,'👋 退部！'); toast(`CPU: 退部！ ${CJ[chosen.color]}${chosen.num}を戻した`);
+    renderAll(); after6Bounce(p); return;
+  }
+  _orig6Bounce.apply(this,arguments);
+};
+const _orig7Pick=show7PickModal;
+show7PickModal=function(p){
+  if(isCpu(p)){
+    G._7selectMode=null;
+    const plan=CPU._7plan||{chain:[],final:null};
+    // 連鎖：手札/マナ/墓地の別の7を場に出す（exec7Moveが再びshow7PickModalを呼ぶ）
+    if(plan.chain&&plan.chain.length){
+      const id=plan.chain.shift();
+      const found=cpuFindCardZone(p,id);
+      if(found){
+        G.players[p][found.zone]=G.players[p][found.zone].filter(c=>c.id!==id);
+        found.card._faceDown=false;
+        toast('CPU: 7連鎖！');
+        setTimeout(()=>exec7Move(p,found.card,p,'field',p),400);
+        return;
+      }
+    }
+    // 連鎖終了：最後は相手の脅威を除去（デッキ送り）
+    if(plan.final!=null){
+      const opp=p===1?2:1;
+      const tgt=G.players[opp].field.find(c=>c.id===plan.final);
+      CPU._7plan=null;
+      if(tgt){
+        G.players[opp].field=G.players[opp].field.filter(c=>c.id!==plan.final);
+        toast(`CPU: 7効果 → ${CJ[tgt.color]}${tgt.num}をデッキ送り`);
+        setTimeout(()=>exec7Move(p,tgt,opp,'deck',opp),400);
+        return;
+      }
+    }
+    CPU._7plan=null; G._7selectMode=null;
+    checkExTjia(p); setTimeout(()=>{ if(G.phase==='summon')phaseSummon(); },400);
+    return;
+  }
+  _orig7Pick.apply(this,arguments);
+};
+const _origPick5=pick5Grave;
+pick5Grave=function(p,remaining){
+  if(isCpu(p)){
+    const grave=G.players[p].graveyard;
+    if(!remaining||!grave.length){ checkExTjia(p); setTimeout(()=>{ if(G.phase==='summon')phaseSummon(); },400); return; }
+    // 価値の高い（番号の大きい）カードからマナへ回収
+    const sorted=[...grave].sort((a,b)=>getAtkPower(b)-getAtkPower(a));
+    const pick=sorted[0];
+    G.players[p].graveyard=G.players[p].graveyard.filter(c=>c.id!==pick.id);
+    pick.tapped=false; G.players[p].mana.push(pick);
+    toast(`CPU: ${CJ[pick.color]}${pick.num}をマナへ`); renderAll();
+    if(remaining-1>0&&G.players[p].graveyard.length) setTimeout(()=>pick5Grave(p,remaining-1),300);
+    else { checkExTjia(p); setTimeout(()=>{ if(G.phase==='summon')phaseSummon(); },400); }
+    return;
+  }
+  _origPick5.apply(this,arguments);
+};
+
+// --- 防御：ブロック判断（CPUが守備側のとき自動） ---
+const _origShieldAtk=execShieldAttack;
+execShieldAttack=function(atk,p){
+  const opp=p===1?2:1;
+  if(!ONLINE.enabled && isCpu(opp)){
+    const blockers=G.players[opp].field.filter(c=>(c.num===1||c.num===3)&&!c.tapped&&(!c.linkedWith||c.linkRoot));
+    const d=cpuChooseBlock(opp,atk,blockers,{isDirect:false});
+    if(d.block){ toast(`CPU: ${CJ[d.blocker.color]}${d.blocker.num}でブロック`); fxBlock(atk,p,d.blocker,opp); setTimeout(()=>execCreatureAttack(atk,d.blocker,p),600); }
+    else doShieldBreak(atk,p);
+    return;
+  }
+  _origShieldAtk.apply(this,arguments);
+};
+const _origDirect=execDirectWithBlock;
+execDirectWithBlock=function(atk,p,blockers){
+  const opp=p===1?2:1;
+  if(!ONLINE.enabled && isCpu(opp)){
+    const bl=blockers||G.players[opp].field.filter(c=>(c.num===1||c.num===3)&&!c.tapped&&(!c.linkedWith||c.linkRoot));
+    const d=cpuChooseBlock(opp,atk,bl,{isDirect:true});
+    if(d.block){ toast(`CPU: ${CJ[d.blocker.color]}${d.blocker.num}でブロック`); fxBlock(atk,p,d.blocker,opp); setTimeout(()=>execCreatureAttack(atk,d.blocker,p),600); }
+    else execDirectAttack(atk,p);
+    return;
+  }
+  _origDirect.apply(this,arguments);
+};
+
+// --- 防御：シールド確認（通常札）・ST（CPUが守備側のとき自動） ---
+const _origBreakShield=breakShield;
+breakShield=function(targetP,sc){
+  if(!ONLINE.enabled && isCpu(targetP) && sc.num!==6 && sc.num!==8){
+    if(sc._faceDown)sc._faceDown=false;
+    G.players[targetP].hand.push(sc);
+    renderAll();
+    if(G.phase==='attack')setTimeout(phaseAttack,250);
+    return;
+  }
+  _origBreakShield.apply(this,arguments);
+};
+const _origProcessST=processST;
+processST=function(){
+  if(G.pendingST.length && !ONLINE.enabled && isCpu(G.pendingST[0].player)){
+    cpuResolveSTs(G.pendingST[0].player);
+    return;
+  }
+  _origProcessST.apply(this,arguments);
+};
+function cpuResolveSTs(player){
+  const plan=cpuChooseSTPlan(player); let i=0;
+  const step=()=>{
+    if(i>=plan.length){ stFinish(); return; }
+    const {id,action}=plan[i++];
+    const st=G.pendingST.find(s=>s.card.id===id);
+    if(!st){ step(); return; }
+    G.pendingST=G.pendingST.filter(s=>s.card.id!==id);
+    if(action==='activate'){ toast(`CPU: ST ${CJ[st.card.color]}${st.card.num} 発動`); activateST(st); }
+    else { G.players[player].hand.push(st.card); renderAll(); }
+    setTimeout(step,750);
+  };
+  step();
+}
+
+// --- リンク破壊時／6リンク選択（CPU所有なら自動：価値の低い方を手放す） ---
+const _origBreakLinked=breakLinkedPair;
+breakLinkedPair=function(owner,card){
+  if(isCpu(owner) && card.linkedWith){
+    const partner=card.linkedWith;
+    card.linkedWith=null; card.linkRoot=false; card.speedAttacker=false;
+    partner.linkedWith=null; partner.linkRoot=false; partner.speedAttacker=false;
+    G.players[owner].field=G.players[owner].field.filter(c=>c.id!==card.id&&c.id!==partner.id);
+    // 価値の低い方を墓地へ、高い方を場に残す
+    const toGrave=cpuRemovalValue(card)<=cpuRemovalValue(partner)?card:partner;
+    const keep=(toGrave===card)?partner:card;
+    sendToGrave(owner,toGrave);
+    keep.tapped=true; G.players[owner].field.push(keep);
+    renderAll(); return;
+  }
+  _origBreakLinked.apply(this,arguments);
+};
+const _orig6Linked=show6LinkedChoiceModal;
+show6LinkedChoiceModal=function(p,opp,cardA,cardB){
+  if(!ONLINE.enabled && isCpu(opp)){
+    // CPUの所有ペアが戻される：価値の低い方を手札へ、高い方を場に残す
+    const toHand=cpuRemovalValue(cardA)<=cpuRemovalValue(cardB)?cardA:cardB;
+    const keep=(toHand===cardA)?cardB:cardA;
+    cardA.linkedWith=null;cardA.linkRoot=false;cardA.speedAttacker=false;
+    cardB.linkedWith=null;cardB.linkRoot=false;cardB.speedAttacker=false;
+    G.players[opp].field=G.players[opp].field.filter(c=>c.id!==toHand.id);
+    toHand.tapped=false; G.players[opp].hand.push(toHand);
+    fxEffect(p,'👋 退部！'); toast(`CPU: ${CJ[toHand.color]}${toHand.num}を手札へ`);
+    renderAll(); after6Bounce(p); return;
+  }
+  _orig6Linked.apply(this,arguments);
+};
+
+/* ════════════════ 10. 起動＆ボタン配線 ════════════════ */
+function startCpuGame(){
+  CPU.enabled=true; CPU.player=2; CPU._plan=null; CPU._7plan=null;
+  ONLINE.enabled=false; ONLINE.roomId=null; ONLINE.myPlayer=null;
+  ONLINE.names={1:'あなた',2:'🤖 CPU'};
+  startGame();
+}
+// ローカル/オンライン開始時はCPUを無効化
+const _origStartOffline=startOffline;
+startOffline=function(){ CPU.enabled=false; _origStartOffline.apply(this,arguments); };
+const _origShowOnlineMenu=showOnlineMenu;
+showOnlineMenu=function(){ CPU.enabled=false; _origShowOnlineMenu.apply(this,arguments); };
+
+// タイトル画面表示時にCPUボタンを配線（showTitleScreenはlocal/onlineのみ配線するため補う）
+const _origShowTitle=showTitleScreen;
+showTitleScreen=function(){
+  _origShowTitle.apply(this,arguments);
+  const cpuBtn=document.getElementById('title-cpu-btn');
+  if(cpuBtn) cpuBtn.onclick=()=>{ hideTitleScreen(); startCpuGame(); };
+};
+// 初回ロード時にも一応配線
+window.addEventListener('DOMContentLoaded',()=>{
+  const cpuBtn=document.getElementById('title-cpu-btn');
+  if(cpuBtn && !cpuBtn.onclick) cpuBtn.onclick=()=>{ hideTitleScreen(); startCpuGame(); };
+});
 </script>
 </body>
 </html>
