@@ -3951,7 +3951,7 @@ window.closeModal=closeModal;
 'use strict';
 
 /* ════════════════ 1. CPU 状態 ════════════════ */
-const CPU = { enabled:false, player:2, _plan:null, _7plan:null, busy:false };
+const CPU = { enabled:false, player:2, _plan:null, _7plan:null, busy:false, _busy:false };
 function isCpu(p){ return CPU.enabled && !ONLINE.enabled && parseInt(p)===CPU.player; }
 
 /* ════════════════ 2. スコアリング用の重み ════════════════ */
@@ -3959,6 +3959,7 @@ const CPU_W = {
   body:0.6, breaker:3.0, aggro:4.0, removal:1.4, blocker:2.5, defenseNeed:3.0,
   link:4.0, costEff:0.25, freeBonus:3.0, extjia:6.0, manaHit:0.5, sevenChain:5.0,
   mana4:1.5, atkShield:4.0, atkAggro:5.0, stRisk:0.6, defShield:3.0,
+  bigNum:0.4,   // 大きい数字（強いカード）を召喚で優先する加点
 };
 
 /* ════════════════ 3. 盤面評価・共通ヘルパー ════════════════ */
@@ -3972,8 +3973,14 @@ function cpuEvalBoard(p){
   const aggro=Math.min(1,(5-oppShields)/5+(oppShields===0?0.3:0));
   const enemyThreatens=enUnits.length>0;
   const defenseNeed=((5-myShields)/5)*(enemyThreatens?1:0.3);
+  // 危険度指標: 自分のシールド+ブロッカー - 相手フィールドのブレイク合計
+  // 低いほど即ダイレクトアタックの危機。0以下=即死圏、1=要注意、3以上=安全/有利
+  const oppBreakerTotal=enUnits.reduce((s,c)=>s+cpuBreakerCount(c),0);
+  const myBlockerCount=me.field.filter(c=>(c.num===1||c.num===3)&&!c.tapped&&(!c.linkedWith||c.linkRoot)).length;
+  const dangerLevel=(myShields+myBlockerCount)-oppBreakerTotal;
   return {p,opp,me,en,enUnits,myShields,oppShields,oppCreatureCount:enUnits.length,
-          oppUntappedBlockers,oppBiggest,aggro,defenseNeed,avail:availMana(p)};
+          oppUntappedBlockers,oppBiggest,aggro,defenseNeed,avail:availMana(p),
+          dangerLevel,oppBreakerTotal,myBlockerCount};
 }
 function cpuRemovalValue(card){
   let v=getAtkPower(card);
@@ -3992,7 +3999,7 @@ function cpuHirabonBest(ctx){
     let oppLoss=0,myLoss=0;
     en.field.forEach(c=>{if(c.num===n)oppLoss+=cpuRemovalValue(c);});
     en.mana .forEach(c=>{if(c.num===n)oppLoss+=cpuRemovalValue(c)*CPU_W.manaHit;});
-    me.field.forEach(c=>{if(c.num===n)myLoss+=cpuRemovalValue(c);});
+    me.field.forEach(c=>{if(c.num===n)myLoss+=(n===4?0:cpuRemovalValue(c));});  // 4は破壊→マナ送りなのでロス0
     me.mana .forEach(c=>{if(c.num===n)myLoss+=cpuRemovalValue(c)*CPU_W.manaHit;});
     if(n===2)myLoss+=2;
     const gain=oppLoss-myLoss;
@@ -4014,6 +4021,16 @@ function cpuScoreCard(p,card,ctx){
     score+=bc*CPU_W.breaker*breakDelay;
     score+=bc*ctx.aggro*CPU_W.aggro;
   }
+  // ── 危険度ボーナス ──────────────────────────────────────────────────
+  // dangerLevel = (自分シールド+ブロッカー) - 相手ブレイク合計
+  //   ≤0: 即死危機  1: 要注意  2: 注意  ≥3: 安全/有利
+  // defBonus: 防御カード(1/3/2)を危機ほど優先
+  // atkBonus: 攻撃カード(7/9/0)を有利ほど優先
+  const defBonus  = Math.max(0, (2 - ctx.dangerLevel)) * 8; // 0→16, 1→8, 2→0
+  const atkBonus  = Math.max(0, (ctx.dangerLevel - 2) * 2.5);
+  const inDanger  = ctx.dangerLevel <= 1;
+  const inControl = ctx.dangerLevel >= 3;
+
   switch(card.num){
     case 0:{
       score+=CPU_W.freeBonus;
@@ -4022,18 +4039,38 @@ function cpuScoreCard(p,card,ctx){
         const after=zc.size+1;
         if(after>=4)score+=CPU_W.extjia*2; else score+=CPU_W.extjia*(after/4);
       }
+      if(ctx.me.hand.some(c=>c.num===5&&c.color===card.color&&canSummon(p,c)))score-=5;
+      score-=ctx.me.field.filter(c=>c.num===0).length*3;
       if(ctx.me.field.some(c=>c.num===5)&&ctx.me.graveyard.length)score+=1.5;
+      if(inControl)score+=atkBonus*0.5; // 有利時はエクTジア/トリプルを加速
       break;
     }
-    case 1: score+=CPU_W.blocker*(0.4+ctx.defenseNeed); break;
+    case 1:{
+      score+=CPU_W.blocker*(0.4+ctx.defenseNeed);
+      if(ctx.en.field.some(c=>c.num===0))score+=CPU_W.blocker*2;
+      score+=defBonus; // 危機時は最優先で場に出す
+      break;
+    }
     case 2:{
       const b=cpuHirabonBest(ctx); plan.declareNum=b.num;
-      score+=Math.max(0,b.gain)*CPU_W.removal;
-      if(b.gain<=0)score-=1.5;
+      const oppHas0   =ctx.en.field.some(c=>c.num===0)||ctx.en.mana.some(c=>c.num===0);
+      const oppHas9   =ctx.en.field.some(c=>c.num===9)||ctx.en.mana.some(c=>c.num===9);
+      const oppHasLink=ctx.en.field.some(c=>c.linkedWith&&c.linkRoot);
+      // 緊急時（dangerLevel≤0）は利益>0なら召喚して少しでも脅威を除去
+      const gainThreshold=ctx.dangerLevel<=0?0:8;
+      const hasTarget =oppHas0||oppHas9||oppHasLink||b.gain>=gainThreshold;
+      if(hasTarget){
+        score+=b.gain*CPU_W.removal;
+        score+=defBonus*0.8; // 危機時・相手0の破壊は防御と同等の最優先行動
+      }else{
+        return {score:-5, plan:null, cost};
+      }
       break;
     }
     case 3:{
       score+=CPU_W.blocker*(0.5+ctx.defenseNeed);
+      if(ctx.en.field.some(c=>c.num===0))score+=CPU_W.blocker*2;
+      score+=defBonus; // 危機時は最優先で場に出す
       const can=ctx.me.field.some(c=>c.num===4&&c.color===card.color&&!c.linkedWith)||ctx.me.hand.some(c=>c.num===4&&c.color===card.color);
       if(can)score+=CPU_W.link; break;
     }
@@ -4043,16 +4080,22 @@ function cpuScoreCard(p,card,ctx){
       if(can)score+=CPU_W.link; break;
     }
     case 5:{
-      const heavy=ctx.me.hand.filter(c=>c.num>=5&&c.num!==card.num).length;
-      score+=heavy*1.5;
+      const heavy=ctx.me.hand.filter(c=>c.num>=6&&c.num!==card.num).length;
+      score+=heavy*0.8;
       const can=ctx.me.field.some(c=>c.num===5&&c.color===card.color&&!c.linkedWith)||ctx.me.hand.some(c=>c.num===5&&c.color===card.color&&c.id!==card.id);
-      if(can)score+=CPU_W.link; break;
+      if(can)score+=CPU_W.link;
+      if(ctx.me.hand.some(c=>c.num===0))score+=2.5;
+      if(inControl)score+=atkBonus*0.3;
+      break;
     }
     case 6:{
       if(ctx.enUnits.length){
         const t=ctx.enUnits.reduce((a,b)=>cpuRemovalValue(a)>=cpuRemovalValue(b)?a:b);
-        plan.bounceTargetId=t.id; score+=cpuRemovalValue(t)*CPU_W.removal;
-      }else score-=1.0;
+        if(cpuRemovalValue(t)>=4){
+          plan.bounceTargetId=t.id; score+=cpuRemovalValue(t)*CPU_W.removal*0.7;
+          if(inDanger)score+=defBonus*0.6; // 危機時・強力なカードを戻すのは防御にもなる
+        }else{ score-=1.5; }
+      }else score-=2.0;
       break;
     }
     case 7:{
@@ -4067,20 +4110,32 @@ function cpuScoreCard(p,card,ctx){
       if(ctx.enUnits.length){
         const t=ctx.enUnits.reduce((a,b)=>cpuRemovalValue(a)>=cpuRemovalValue(b)?a:b);
         plan.finalMoveTargetId=t.id; score+=cpuRemovalValue(t)*CPU_W.removal*1.2;
+        if(inDanger)score+=defBonus*0.5; // 危機時・脅威除去は防御にもなる
       }
+      score+=atkBonus*0.8; // 有利時は7連鎖で一気に決める
       break;
     }
     case 8:{
+      // 手札から召喚するのは終盤（相手シールド≤2）のみ
+      // 自シールド≤1の絶体絶命時は全タップで時間を稼ぐ（例外）
+      if(ctx.oppShields>2 && ctx.myShields>1) return {score:-3, plan:null, cost};
       const untapped=ctx.enUnits.filter(c=>!c.tapped);
       score+=untapped.length*2.0;
       score+=ctx.oppUntappedBlockers.length*2.0;
       const myAtk=ctx.me.field.filter(c=>!c.summonedThisTurn||c.speedAttacker).length;
       score+=myAtk*ctx.aggro*2.0;
-      if(untapped.length===0)score-=2.0;
+      if(untapped.length===0)score-=1.0;
+      score+=atkBonus; // 有利な終盤に全タップして押し込む
       break;
     }
-    case 9: score+=ctx.aggro*3.0; break;
+    case 9:{
+      score+=ctx.aggro*3.0;
+      score+=atkBonus*1.2;  // 有利時はフィニッシャーを積極的に
+      if(inDanger)score-=defBonus*0.4; // 危機時は大型より防御を優先（ただし完全には消さない）
+      break;
+    }
   }
+  score+=card.num*CPU_W.bigNum;        // 大きい数字を優先（4,5,6,7,8,9ほど加点）
   score-=cost*CPU_W.costEff;
   return {score,plan,cost};
 }
@@ -4091,7 +4146,12 @@ function cpuChooseBestPlay(p,minScore=0.5){
     if(r.score===-Infinity)continue;
     if(!best||r.score>best.score)best={card,score:r.score,plan:r.plan,cost:r.cost};
   }
-  if(!best||best.score<minScore)return null;
+  if(!best)return null;
+  // 緊急時（自シールド≤2 or dangerLevel≤0）はスコア閾値を大幅緩和して必ず行動する
+  // -6 に設定：card2(対象なし)=-5 より低いのでそれも拾う
+  const emergency = ctx.myShields<=2 || ctx.dangerLevel<=0;
+  const threshold = emergency ? -6 : minScore;
+  if(best.score<threshold)return null;
   return best;
 }
 
@@ -4102,13 +4162,13 @@ function cpuKeepValue(p,card,ctx){
     case 0: v=100; break;
     case 7:{ v=8; const o=G.players[p].hand.filter(c=>c.num===7&&c.id!==card.id).length; if(o)v+=6; break; }
     case 9: v=6; break;
-    case 8: v=4; break;
+    case 8: v=1.5; break;  // 基本はチャージ要員。終盤のみ召喚する
     case 6: v=4; break;
     case 5: v=G.players[p].field.some(c=>c.num===5)?2:4; break;
-    case 2: v=3; break;
+    case 2: v=6; break;
     case 4: v=2.5; break;
-    case 3: v=2+ctx.defenseNeed*2; break;
-    case 1: v=1.5+ctx.defenseNeed*2; break;
+    case 3: v=3+ctx.defenseNeed*3; break;  // ブロッカー：防御必要度に応じて大きく上昇
+    case 1: v=3+ctx.defenseNeed*3; break;  // ブロッカー：同上
     default: v=card.num*0.5;
   }
   return v;
@@ -4117,11 +4177,18 @@ function cpuManaUtility(p,card,ctx){
   const me=G.players[p]; let v=1;
   if(card.num===9)v+=1.5;
   if(card.num===4)v+=CPU_W.mana4;
-  const has9=me.mana.some(c=>c.num===9);
-  if(!has9){
-    const haveColor=me.mana.some(c=>c.color===card.color);
-    const want=me.hand.some(c=>c.color===card.color&&c.id!==card.id&&c.num!==0);
-    if(!haveColor&&want)v+=3;
+  // 序盤（マナ6以下）に4以外の同じ数字を重複チャージしない（相手2の宣言対策）
+  // 重複リスクがある場合はペナルティを与え、色ボーナスも与えない
+  const dupRisk=card.num>0&&card.num!==4&&totalMana(p)<6&&me.mana.some(c=>c.num===card.num);
+  if(!dupRisk){
+    const has9=me.mana.some(c=>c.num===9);
+    if(!has9){
+      const haveColor=me.mana.some(c=>c.color===card.color);
+      const want=me.hand.some(c=>c.color===card.color&&c.id!==card.id&&c.num!==0);
+      if(!haveColor&&want)v+=3;
+    }
+  }else{
+    v-=3; // 重複チャージは明確なペナルティ（色ボーナスなし）
   }
   return v;
 }
@@ -4166,10 +4233,15 @@ function cpuScoreAttack(p,atk,target,ctx){
     return -Infinity;
   }
   if(target.type==='shield'){
-    if(maxBlk>=aPow)return (maxBlk>aPow)?-aPow*CPU_W.body:-0.5;
     const broken=Math.min(br,ctx.oppShields);
-    let s=broken*(CPU_W.atkShield+ctx.aggro*CPU_W.atkAggro);
-    s-=CPU_W.stRisk; return s;
+    const shieldVal=broken*(CPU_W.atkShield+ctx.aggro*CPU_W.atkAggro)-CPU_W.stRisk;
+    if(maxBlk<aPow) return shieldVal;  // 勝てる攻撃
+    // 自シールド≤1の絶体絶命：ブロッカーに負けても特攻してシールドを割りにいく
+    if(ctx.myShields<=1){
+      const tradeScore = shieldVal - (maxBlk>aPow ? aPow*CPU_W.body : 0); // 相討ちは本体損なし
+      return Math.max(0.1, tradeScore); // 最低でも微正値にして攻撃する意思を保つ
+    }
+    return (maxBlk>aPow)?-aPow*CPU_W.body:-0.5;
   }
   if(target.type==='direct'){
     if(maxBlk===0)return Infinity;
@@ -4254,6 +4326,7 @@ function cpuTryLinks(p){
 // 召喚1手
 function cpuSummonStep(p){
   if(G.gameOver)return;
+  if(G.turn!==p)return;  // ターンが変わっていたら古いsetTimeoutを無視（突然自分のターンになるバグ防止）
   // エクTジア成立なら即勝利（CPUは正しい順を知っている）
   if(hasExTjia(p)){ toast('CPU: ⭐エクTジア宣言！'); setTimeout(()=>winGame(p,'エクTジア！（0の4色）'),900); return; }
   if(cpuTryLinks(p))return;                          // リンク（doLinkがphaseSummonを再呼び出し）
@@ -4273,8 +4346,17 @@ function cpuExecSummon(p,pick){
 // 攻撃1手
 function cpuAttackStep(p){
   if(G.gameOver)return;
+  if(G.turn!==p||G.phase!=='attack')return; // ターン/フェーズが変わっていたら古いsetTimeoutを無視
+  // 相手(あなた)の防御操作が残っている間は待つ：
+  //  ・pendingST（シールドトリガーの発動選択）
+  //  ・モーダル表示中（ST/シールド確認/ブロック選択など）
+  const m=document.getElementById('modal-overlay');
+  const modalOpen=!!(m&&m.classList&&m.classList.contains('show'));
+  if(G.pendingST.length||modalOpen){ setTimeout(()=>cpuAttackStep(p),450); return; }
+  if(CPU._busy)return;            // 重複したphaseAttack呼び出しによる多重攻撃を防止
   const a=cpuChooseAttack(p);
-  if(!a){ setTimeout(()=>{ if(!G.gameOver) endTurn(); },300); return; }
+  if(!a){ CPU._busy=false; setTimeout(()=>{ if(!G.gameOver) endTurn(); },300); return; }
+  CPU._busy=true;
   const atk=a.attacker, opp=p===1?2:1;
   G.atkCard=null;
   toast(`CPU: ${CJ[atk.color]}${atk.num} で攻撃`);
@@ -4286,7 +4368,7 @@ function cpuAttackStep(p){
       execDirectWithBlock(atk,p,bl);
     }else{
       const t=G.players[opp].field.find(c=>c.id===a.target.card.id);
-      if(t)execCreatureAttack(atk,t,p); else setTimeout(()=>cpuAttackStep(p),100);
+      if(t)execCreatureAttack(atk,t,p); else { CPU._busy=false; setTimeout(()=>cpuAttackStep(p),100); }
     }
   },550);
 }
@@ -4316,7 +4398,7 @@ phaseSummon=function(){
 };
 const _origPhaseAttack=phaseAttack;
 phaseAttack=function(){
-  if(!G.gameOver && isCpu(G.turn)){ G.phase='attack'; G.selCard=null; G.atkCard=null; renderAll(); setTimeout(()=>cpuAttackStep(G.turn),300); return; }
+  if(!G.gameOver && isCpu(G.turn)){ G.phase='attack'; G.selCard=null; G.atkCard=null; CPU._busy=false; renderAll(); setTimeout(()=>cpuAttackStep(G.turn),300); return; }
   _origPhaseAttack.apply(this,arguments);
 };
 
@@ -4432,15 +4514,44 @@ execDirectWithBlock=function(atk,p,blockers){
 // --- 防御：シールド確認（通常札）・ST（CPUが守備側のとき自動） ---
 const _origBreakShield=breakShield;
 breakShield=function(targetP,sc){
-  if(!ONLINE.enabled && isCpu(targetP) && sc.num!==6 && sc.num!==8){
-    if(sc._faceDown)sc._faceDown=false;
-    G.players[targetP].hand.push(sc);
-    renderAll();
-    if(G.phase==='attack')setTimeout(phaseAttack,250);
-    return;
+  if(!ONLINE.enabled){
+    // ── CPU攻撃 → P1(人間)防御 ──────────────────────────────────────
+    // OKコールバックにターンチェックを付けてstaleなphaseAttack発火を防ぐ
+    if(isCpu(G.turn) && !isCpu(targetP)){
+      if(sc.num===6||sc.num===8){
+        G.pendingST.push({player:targetP,card:sc});
+        processST(); return;
+      }
+      if(sc._faceDown)sc._faceDown=false;
+      G.players[targetP].hand.push(sc);
+      renderAll();
+      const capturedTurn=G.turn; // このモーダルを出した時点のターンを記憶
+      showSimpleModal('シールド確認',[{label:'OK',cls:'g',fn:()=>{
+        closeModal();
+        // まだCPUのターン中なら攻撃継続。ターンが変わっていればモーダルを閉じるだけ
+        if(G.phase==='attack'&&G.turn===capturedTurn)setTimeout(phaseAttack,200);
+      }}],'シールドが手札に加わりました',targetP);
+      return;
+    }
+    // ── P1攻撃 → CPU(P2)防御 ──────────────────────────────────────
+    if(isCpu(targetP)&&sc.num!==6&&sc.num!==8){
+      if(sc._faceDown)sc._faceDown=false;
+      G.players[targetP].hand.push(sc);
+      renderAll();
+      if(G.phase==='attack')setTimeout(phaseAttack,250);
+      return;
+    }
   }
   _origBreakShield.apply(this,arguments);
 };
+// checkDirect が setTimeout(phaseAttack,400) を積む → ターン変化後に誤発火するのを防ぐ
+// CPU攻撃時はOKボタン(ターンチェック付き)またはstFinishが継続を担うので不要
+const _origCheckDirect=checkDirect;
+checkDirect=function(targetP,attP){
+  if(CPU.enabled&&!ONLINE.enabled&&isCpu(attP))return;
+  _origCheckDirect.apply(this,arguments);
+};
+
 const _origProcessST=processST;
 processST=function(){
   if(G.pendingST.length && !ONLINE.enabled && isCpu(G.pendingST[0].player)){
@@ -4498,6 +4609,19 @@ show6LinkedChoiceModal=function(p,opp,cardA,cardB){
 };
 
 /* ════════════════ 10. 起動＆ボタン配線 ════════════════ */
+// CPU対戦では相手(P2=CPU)の手札を常に裏向きにする（自分=P1のみ表向き）
+const _origRenderHand=renderHand;
+renderHand=function(p){
+  if(CPU.enabled && !ONLINE.enabled){
+    const el=document.getElementById('p'+p+'-hand'); if(!el)return;
+    const showFront=(parseInt(p)===1);
+    el.innerHTML=showFront
+      ?G.players[p].hand.map(c=>cardHTML(c,'hand',p)).join('')
+      :G.players[p].hand.map(()=>'<div class="card card-back"><div class="uno-oval" style="background:rgba(255,255,255,.25)"></div><div class="cn" style="font-size:14px">T</div></div>').join('');
+    return;
+  }
+  _origRenderHand.apply(this,arguments);
+};
 function startCpuGame(){
   CPU.enabled=true; CPU.player=2; CPU._plan=null; CPU._7plan=null;
   ONLINE.enabled=false; ONLINE.roomId=null; ONLINE.myPlayer=null;
