@@ -4720,6 +4720,7 @@ function cpuChooseManaCharge(p,opts={}){
     for(const s of scored){
       if(used+s.cost<=availMP){ total+=s.score; used+=s.cost; willPlay.push(s.card); }
     }
+    evalWithMana._lastWillPlay=willPlay.map(c=>c.id);
     // ── 次ターン被弾リスク ──────────────────────────────────────────────
     // 今ターンこれらを召喚した後、自分の守り(シールド + 場に残る&新規のブロッカー)が
     // 相手の次ターンの打点に耐えられるか。耐えられないならリスクとして大きく減点。
@@ -4751,11 +4752,14 @@ function cpuChooseManaCharge(p,opts={}){
 
   // 候補: 各手札カードをチャージ / チャージしない(null)
   const noChargeProjected=evalWithMana(null);
+  // 守る：チャージしなくても今ターン召喚する予定のカードはマナに回さない（除去札の2を捨てる事故を防ぐ）
+  const protectedIds=new Set(evalWithMana._lastWillPlay||[]);
   let best={card:null, projected:noChargeProjected, chargeScore:0};
   let anyChargeEnablesSummon=false;
   let bestSafe=null; // 重複しない安全な候補のうち最良
   for(const card of hand){
     if(card.num===0)continue; // 0は絶対にチャージしない
+    if(protectedIds.has(card.id))continue; // 今ターン召喚予定のカードはチャージ候補から除外
     const projected=evalWithMana(card);
     const ctx=cpuEvalBoard(p);
     let keep=cpuKeepValue(p,card,ctx);
@@ -4791,6 +4795,7 @@ function cpuChooseManaCharge(p,opts={}){
     let alt=null;
     for(const card of hand){
       if(card.num===0)continue;
+      if(protectedIds.has(card.id))continue; // 召喚予定カードは代替チャージにも使わない
       const sc=me3.mana.filter(c=>c.num===card.num).length+me3.field.filter(c=>c.num===card.num).length;
       if(card.num!==4 && sc>0)continue; // これも重複→除外
       const k=cpuKeepValue(p,card,cpuEvalBoard(p));
@@ -4816,6 +4821,7 @@ function cpuChooseManaCharge(p,opts={}){
     let lowest=null;
     for(const card of hand){
       if(card.num===0)continue;
+      if(protectedIds.has(card.id))continue; // 召喚予定カードは温存（チャージしない）
       let effKeep=cpuKeepValue(p,card,ctx);
       // 同じ番号が既にマナ/場にあると、相手の2でまとめて破壊される的になる。
       // 9や同番号を2枚並べる愚を避ける。確率と枚数でペナルティを上乗せ。
