@@ -4133,7 +4133,7 @@ window.closeModal=closeModal;
 'use strict';
 
 /* ════════════════ 1. CPU 状態 ════════════════ */
-const CPU = { enabled:false, player:2, _plan:null, _7plan:null, busy:false, _busy:false, revealHand:false, tokuda:false };
+const CPU = { enabled:false, player:2, _plan:null, _7plan:null, busy:false, _busy:false, revealHand:false, tokuda:false, _hirabonAttackDone:false };
 function isCpu(p){ return CPU.enabled && !ONLINE.enabled && Number(p)===Number(CPU.player); }
 
 /* ════════════════ 2. スコアリング用の重み ════════════════ */
@@ -4266,11 +4266,25 @@ function cpuHirabonBest(ctx){
     me.field.forEach(c=>{if(c.num===n)myLoss+=(n===4?0:cpuRemovalValue(c));});  // 4は破壊→マナ送りなのでロス0
     me.mana .forEach(c=>{if(c.num===n)myLoss+=cpuRemovalValue(c)*CPU_W.manaHit;});
     if(n===2)myLoss+=2;
+    // ── 自軍アタッカー巻き添えのテンポ損 ────────────────────────────────
+    // 宣言番号(n)が自分の「今ターン攻撃できる」クリーチャーを巻き添えにすると、
+    // そのターンに入れられたはずのシールド打点を丸ごと失う。特に0(トリプルブレイカー)は
+    // 1体で3枚割れるため損失が大きい。この機会損失を myLoss に加算して、
+    // 「2を出して0を宣言→自分の0を自爆させ、結局1点しか殴れない」ような自滅宣言を避ける。
+    me.field.forEach(c=>{
+      if(c.num===n && n!==4 && canAttack(ctx.p,c)){
+        const lostBreak=Math.min(cpuBreakerCount(c), Math.max(ctx.oppShields,1));
+        myLoss += lostBreak*(CPU_W.atkShield+ctx.aggro*CPU_W.atkAggro)*0.75;
+      }
+    });
     let gain=oppLoss-myLoss;
-    // 相手の0を破壊する場合、エクTジア妨害ボーナスを加算（揃っている色数が多いほど切迫＝高価値）
+    // 相手の0を破壊する場合、エクTジア妨害ボーナスを加算。
+    // エクTジアは4色そろえて初めて成立するため、相手が1色しか持っていない段階での妨害価値は低い。
+    // 揃っている色数で切迫度をスケールし、3色（次で勝ち）に迫ったときだけ高評価する。
     if(n===0 && oppZeroColors.size>0){
       const zerosKilled=en.field.filter(c=>c.num===0).length;
-      gain += zerosKilled*CPU_W.exTjiaDeny + oppZeroColors.size*CPU_W.exTjiaDeny;
+      const urgency=(oppZeroColors.size>=3)?1.5:(oppZeroColors.size>=2)?0.7:0.25; // 1色:ほぼ無視 2色:中 3色:切迫
+      gain += (zerosKilled+oppZeroColors.size)*CPU_W.exTjiaDeny*urgency;
     }
     // ブロッカー除去で攻撃が通るなら、突破価値を gain に上乗せして宣言番号を選ぶ判断に反映
     if(blkByNum[n] && myAttackers.length){
@@ -4848,6 +4862,28 @@ function cpuChooseManaCharge(p,opts={}){
 
   const th=(opts.skipThreshold!==undefined)?opts.skipThreshold:0;
   if(!best.card || best.chargeScore<th && totalMana(p)>4)return null;
+  // ── アタック時ヒラボンの布石 ───────────────────────────────────────────
+  // 今ターン、場の2でアタック時ヒラボンを撃つ価値があるなら捨て札を1枚確保したい。
+  // 特に4はチャージしても、ヒラボンの捨て札にしても結局マナへ行く（同じマナ加速）。
+  // それなら4は手札に残してヒラボンの弾にする方が、宣言の除去効果ぶん得をする。
+  // ただしこのターンの召喚にそのチャージが必要なとき（projected が伸びるとき）は通常通り優先。
+  if(best.card && best.card.num===4 && best.projected<=noChargeProjected+0.01){
+    const plan=cpuHirabonAttackPlan(p, cpuEvalBoard(p));
+    if(plan && plan.marginal>0){
+      // 4を温存し、重複しない非4の代替チャージを探す（無ければ見送って4を弾に残す）
+      const meX=G.players[p]; let alt=null;
+      for(const card of hand){
+        if(card.num===0||card.num===4)continue;
+        if(protectedIds.has(card.id))continue;
+        const sc=meX.mana.filter(c=>c.num===card.num).length+meX.field.filter(c=>c.num===card.num).length;
+        if(sc>0)continue; // 重複は避ける
+        const k=cpuKeepValue(p,card,cpuEvalBoard(p));
+        if(!alt||k<alt.k)alt={card,k};
+      }
+      if(alt) return {card:alt.card, chargeScore:0};
+      return null;
+    }
+  }
   return best;
 }
 
@@ -4883,6 +4919,23 @@ function cpuScoreAttack(p,atk,target,ctx){
 
   if(target.type==='creature'){
     const tPow=getAtkPower(target.card);
+    // ── 防御側のブロッカー割り込みを考慮 ────────────────────────────────
+    // タップ済みナンバーズへの攻撃は、防御側が未タップブロッカー(1・3)で割り込める。
+    // 相手は自分が得になるときだけブロックする：
+    //   maxBlk>aPow … 攻撃役が一方的に討たれ、狙ったタップ済みは守られる＝丸損。
+    //                 追撃で押し切れる場面(オーバーラン)はcpuChooseAttack側で別処理済みなので、
+    //                 ここでは「有効打にならない自滅」として強く減点し選ばせない。
+    //   maxBlk===aPow … 相討ち（攻撃役とブロッカーが相討ち、狙ったカードは残る）。
+    //                 ブロッカー1体を消す価値はあるが自軍も失うので実質は小さい。
+    //   maxBlk<aPow（またはブロッカー無し）… 割り込むと相手が損なのでブロックされず、狙い通り倒せる。
+    if(maxBlk>aPow){
+      return -aPow*CPU_W.body-preservePenalty-0.5; // 確実に割り込まれて自滅 → やらない
+    }
+    if(maxBlk===aPow){
+      const blk=ctx.oppUntappedBlockers.reduce((a,b)=>getAtkPower(a)>=getAtkPower(b)?a:b);
+      // 相討ちで割り込まれ得る：ブロッカー除去価値 − 自軍ロス（多くは僅少〜負）
+      return Math.max(-0.5, cpuRemovalValue(blk)*CPU_W.removal-aPow*CPU_W.body-preservePenalty);
+    }
     if(aPow>tPow)return cpuRemovalValue(target.card)*CPU_W.removal-preservePenalty;
     if(aPow===tPow)return cpuRemovalValue(target.card)*CPU_W.removal-aPow*CPU_W.body-preservePenalty;
     return -Infinity;
@@ -5091,6 +5144,97 @@ function cpuExecSummon(p,pick){
   setTimeout(()=>{ if(!G.gameOver) completeSummon(p,card); },500);
 }
 // 攻撃1手
+// ═══════════════════════════════════════════════════════════════════════
+//  アタック時ヒラボン（手札1枚捨て→数字宣言→両者破壊→1回攻撃）の評価と実行
+// ═══════════════════════════════════════════════════════════════════════
+// 通常攻撃は宣言なしでもできるので、ここで測るのは「宣言する追加価値 − 手札を1枚失うコスト」。
+//   ・宣言の盤面利益(b.gain)＝相手カード除去 ＋ ブロッカー(3など)除去で攻撃が通る突破価値
+//     （cpuHirabonBestが両方を内包して算出。相手0が複数なら除去価値が大きい＝高評価）
+//   ・捨て札コスト＝手放すカードのkeep値。手札が薄い(2枚以下)ほど痛手として加点。
+//   ・例外：4を捨てるとsendToGraveでマナへ行く＝チャージ相当＋効果なので捨て得。
+function cpuHirabonAttackPlan(p, ctx){
+  const me=G.players[p];
+  // 攻撃できる場の2（リンクのサブカードは個別攻撃不可なので除外）
+  const attacker=me.field.find(c=>c.num===2 && canAttack(p,c) && (!c.linkedWith||c.linkRoot));
+  if(!attacker) return null;
+  if(!me.hand.length) return null;          // 捨てる手札が無ければ発動不可
+  const b=cpuHirabonBest(ctx);
+  if(b.gain<=0) return null;                // 宣言しても盤面利益が無い＝手札だけ損
+  if(b.num===2) return null;                // 自分の攻撃役2を巻き込む宣言はしない
+
+  // 捨て札の選定：最も手放してよい1枚。0は絶対に捨てない。4はマナ送りなので捨て得。
+  let bestDiscard=null;
+  for(const c of me.hand){
+    if(c.num===0) continue;
+    let cost=cpuKeepValue(p,c,ctx);
+    if(c.num===4) cost-=(CPU_W.mana4+1.0);  // 捨ててもマナに行く＝チャージ＋効果のおまけ
+    if(!bestDiscard || cost<bestDiscard.cost) bestDiscard={card:c,cost};
+  }
+  if(!bestDiscard) return null;             // 手札が0しかない等
+
+  // 手札が薄いほど1枚失う痛みは大きい（特に2枚以下）。
+  const handAfter=me.hand.length-1;
+  let handPenalty=0;
+  if(handAfter<=1) handPenalty=8;
+  else if(handAfter<=2) handPenalty=3;
+
+  const marginal=b.gain - bestDiscard.cost - handPenalty;
+  return {attacker, declareNum:b.num, gain:b.gain, discardCard:bestDiscard.card, discardCost:bestDiscard.cost, marginal};
+}
+// ヒラボン後、指定の攻撃役で1回だけ攻撃する（ブロック確認は通常通り防御側に出す）
+function cpuExecSingleAttack(p, atk){
+  const opp=p===1?2:1;
+  const ctx=cpuEvalBoard(p);
+  const targets=[];
+  if(ctx.oppShields>0)targets.push({type:'shield'}); else targets.push({type:'direct'});
+  ctx.en.field.filter(c=>c.tapped&&(!c.linkedWith||c.linkRoot)).forEach(c=>targets.push({type:'creature',card:c}));
+  let best=null;
+  for(const t of targets){
+    const s=cpuScoreAttack(p,atk,t,ctx);
+    if(s===-Infinity)continue;
+    if(!best||s>best.score)best={t,score:s};
+  }
+  const tgt=best?best.t:(ctx.oppShields>0?{type:'shield'}:{type:'direct'});
+  CPU._busy=true;
+  toast(`CPU: ${CJ[atk.color]}${atk.num} で攻撃`);
+  setTimeout(()=>{
+    if(G.gameOver)return;
+    if(tgt.type==='shield') execShieldAttack(atk,p);
+    else if(tgt.type==='direct'){
+      const bl=G.players[opp].field.filter(c=>(c.num===1||c.num===3)&&!c.tapped&&(!c.linkedWith||c.linkRoot));
+      execDirectWithBlock(atk,p,bl);
+    }else{
+      const tc=G.players[opp].field.find(c=>c.id===tgt.card.id);
+      if(tc)execCreatureAttackWithBlock(atk,tc,p); else execShieldAttack(atk,p);
+    }
+  },450);
+}
+// アタック時ヒラボン一式を実行：捨て→宣言→両者破壊→攻撃
+function cpuExecHirabonAttack(p, hp){
+  const opp=p===1?2:1, dc=hp.discardCard;
+  // 1) 手札を1枚捨てる（4はsendToGraveの仕様でマナへ行く）
+  G.players[p].hand=G.players[p].hand.filter(c=>c.id!==dc.id);
+  sendToGrave(p,dc);
+  toast(`CPU: ${CJ[dc.color]}${dc.num}を捨ててヒラボン発動！`);
+  if(typeof fxEffect==='function')fxEffect(p,'ヒラボン！');
+  renderAll();
+  // 2) 数字宣言→両者破壊
+  setTimeout(()=>{
+    if(G.gameOver)return;
+    const num=hp.declareNum;
+    toast(`CPU: ヒラボン宣言 → ${num}`);
+    destroyByNum(p,num); destroyByNum(opp,num);
+    if(typeof fxHirabon==='function')fxHirabon(p,num);
+    renderAll(); checkExTjia(p);
+    // 3) 攻撃役が生き残っていれば1回攻撃。巻き添えで消えていればループ続行。
+    setTimeout(()=>{
+      if(G.gameOver)return;
+      const atk=G.players[p].field.find(c=>c.id===hp.attacker.id);
+      if(!atk){ CPU._busy=false; setTimeout(()=>cpuAttackStep(p),150); return; }
+      cpuExecSingleAttack(p, atk);
+    },650);
+  },600);
+}
 function cpuAttackStep(p){
   if(G.gameOver)return;
   if(G.turn!==p||G.phase!=='attack')return; // ターン/フェーズが変わっていたら古いsetTimeoutを無視
@@ -5101,6 +5245,21 @@ function cpuAttackStep(p){
   const modalOpen=!!(m&&m.classList&&m.classList.contains('show'));
   if(G.pendingST.length||modalOpen){ setTimeout(()=>cpuAttackStep(p),450); return; }
   if(CPU._busy)return;            // 重複したphaseAttack呼び出しによる多重攻撃を防止
+  // ── アタック時ヒラボン（1ターン1回）────────────────────────────────────
+  // 既にダイレクト勝ちが確定しているなら手札を切らずそのまま殴る。
+  // そうでなければ、宣言の盤面利益（除去＋ブロッカー突破）が捨て札コストを十分上回るとき発動。
+  if(!CPU._hirabonAttackDone){
+    const hctx=cpuEvalBoard(p);
+    if(!cpuHasLethal(p,hctx)){
+      const hp=cpuHirabonAttackPlan(p,hctx);
+      if(hp && hp.marginal>2){
+        CPU._hirabonAttackDone=true;
+        CPU._busy=true;
+        cpuExecHirabonAttack(p,hp);
+        return;
+      }
+    }
+  }
   const a=cpuChooseAttack(p);
   if(!a){ CPU._busy=false; setTimeout(()=>{ if(!G.gameOver) endTurn(); },300); return; }
   CPU._busy=true;
@@ -5153,7 +5312,7 @@ function execCreatureAttackWithBlock(atk,target,p){
 const _origPhaseUntap=phaseUntap;
 phaseUntap=function(){
   _origPhaseUntap.apply(this,arguments);
-  if(!G.gameOver && isCpu(G.turn)){ setBar(`🤖 CPUのターン`,[]); setTimeout(phaseDraw,800); }
+  if(!G.gameOver && isCpu(G.turn)){ CPU._hirabonAttackDone=false; setBar(`🤖 CPUのターン`,[]); setTimeout(phaseDraw,800); }
 };
 const _origPhaseCharge=phaseCharge;
 phaseCharge=function(){
