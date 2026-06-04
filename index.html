@@ -4133,7 +4133,7 @@ window.closeModal=closeModal;
 'use strict';
 
 /* ════════════════ 1. CPU 状態 ════════════════ */
-const CPU = { enabled:false, player:2, _plan:null, _7plan:null, busy:false, _busy:false, revealHand:false, tokuda:false, _hirabonAttackDone:false };
+const CPU = { enabled:false, player:2, _plan:null, _7plan:null, busy:false, _busy:false, revealHand:false, tokuda:false, _hirabonAttackDone:false, _exTjiaDeclaring:false };
 function isCpu(p){ return CPU.enabled && !ONLINE.enabled && Number(p)===Number(CPU.player); }
 
 /* ════════════════ 2. スコアリング用の重み ════════════════ */
@@ -4918,27 +4918,28 @@ function cpuScoreAttack(p,atk,target,ctx){
   const preservePenalty=(isMyBlocker&&wouldLoseIfAttack)?(CPU_W.blocker+CPU_W.defShield)*1.5:0;
 
   if(target.type==='creature'){
-    const tPow=getAtkPower(target.card);
-    // ── 防御側のブロッカー割り込みを考慮 ────────────────────────────────
-    // タップ済みナンバーズへの攻撃は、防御側が未タップブロッカー(1・3)で割り込める。
-    // 相手は自分が得になるときだけブロックする：
-    //   maxBlk>aPow … 攻撃役が一方的に討たれ、狙ったタップ済みは守られる＝丸損。
-    //                 追撃で押し切れる場面(オーバーラン)はcpuChooseAttack側で別処理済みなので、
-    //                 ここでは「有効打にならない自滅」として強く減点し選ばせない。
-    //   maxBlk===aPow … 相討ち（攻撃役とブロッカーが相討ち、狙ったカードは残る）。
-    //                 ブロッカー1体を消す価値はあるが自軍も失うので実質は小さい。
-    //   maxBlk<aPow（またはブロッカー無し）… 割り込むと相手が損なのでブロックされず、狙い通り倒せる。
-    if(maxBlk>aPow){
-      return -aPow*CPU_W.body-preservePenalty-0.5; // 確実に割り込まれて自滅 → やらない
+    // ── 防御側は「自分が一番得な応手」を選ぶ前提で評価する ──────────────────
+    // タップ済みクリーチャーへの攻撃に対し、防御側は (a)ブロックしない (b)未タップ
+    // ブロッカー(1・3)で割り込む、のうち“CPUにとって最も損”な方を選べる。
+    // 各応手の決着は execCreatureAttack と同じ (a>=d:相手破壊 / d>=a:攻撃側破壊)。
+    // よってCPUから見た価値は各応手の最小値（最悪ケース）とする。
+    //   例)「3でタップ6を殴る」→ 相手は放置すれば3が6に負けて勝手に死ぬ＝丸損なので
+    //      ブロックせず放置を選ぶ → 価値は負 → この自滅攻撃は選ばれない。
+    // ※ 突破して打点を伸ばす“犠牲攻撃”はシールド攻撃側(cpuChooseAttackのオーバーラン
+    //    処理)で扱う。クリーチャー攻撃でブロッカーを除去したくても、防御側が得をする
+    //    なら相手はブロックしないので、ここで盤面交換以上の価値は見込めない。
+    const battle=(defCard)=>{
+      const dPow=getAtkPower(defCard);
+      if(aPow>dPow)   return cpuRemovalValue(defCard)*CPU_W.removal;                  // 倒して生存
+      if(aPow===dPow) return cpuRemovalValue(defCard)*CPU_W.removal-aPow*CPU_W.body;  // 相討ち
+      return -aPow*CPU_W.body-0.5;                                                    // 攻撃役だけ死ぬ＝丸損
+    };
+    let worst=battle(target.card);                 // (a) ブロックされない場合
+    for(const b of ctx.oppUntappedBlockers){       // (b) 各ブロッカーで割り込まれた場合
+      const v=battle(b);
+      if(v<worst)worst=v;
     }
-    if(maxBlk===aPow){
-      const blk=ctx.oppUntappedBlockers.reduce((a,b)=>getAtkPower(a)>=getAtkPower(b)?a:b);
-      // 相討ちで割り込まれ得る：ブロッカー除去価値 − 自軍ロス（多くは僅少〜負）
-      return Math.max(-0.5, cpuRemovalValue(blk)*CPU_W.removal-aPow*CPU_W.body-preservePenalty);
-    }
-    if(aPow>tPow)return cpuRemovalValue(target.card)*CPU_W.removal-preservePenalty;
-    if(aPow===tPow)return cpuRemovalValue(target.card)*CPU_W.removal-aPow*CPU_W.body-preservePenalty;
-    return -Infinity;
+    return worst-preservePenalty;
   }
   if(target.type==='shield'){
     const broken=Math.min(br,ctx.oppShields);
@@ -4964,24 +4965,29 @@ function cpuChooseAttack(p,minScore=0.01){
   if(!attackers.length)return null;
   const oppTapped=ctx.en.field.filter(c=>c.tapped&&(!c.linkedWith||c.linkRoot));
 
-  // ── オーバーラン・リーサル検出 ───────────────────────────────────────
-  // 相手シールドが0のとき、ブロッカー(1・3)は1体につき攻撃1回しか止められない
-  //（ブロックするとタップされ再ブロック不可）。したがって
-  //   「攻撃可能クリーチャー数 ＞ 相手の未タップブロッカー数」
-  // ならあふれた攻撃がダイレクトアタックになり必ず勝てる。
-  // 例：CPUが2を2体、相手がブロッカー3を1体 → 1体目をブロックさせて消費させ、
-  //     2体目のダイレクトで勝利。個々のバトル(2 vs 3)では負けても数で押し切れる。
-  // 単体勝敗だけ見て攻撃を止めてしまう問題を、ここで明示的に救済する。
-  if(ctx.oppShields===0 && attackers.length>ctx.oppUntappedBlockers.length){
+  // ── オーバーラン検出（物量で押し切れるか）───────────────────────────────
+  // ブロッカー(1・3)は1体につき攻撃1回しか止められない（ブロックするとタップされ再ブロック不可）。
+  // したがって「攻撃可能クリーチャー数 ＞ 相手の未タップブロッカー数」なら、
+  // あふれた攻撃は必ず通る（個々のバトルで負けても数で押し切れる）。
+  //   ・相手シールドが0 → あふれた攻撃がダイレクトアタック＝必ず勝てる（score:Infinity）。
+  //   ・相手シールドが残っていても → あふれた攻撃でシールドを割れる＝物量で押し切れる。
+  //     例：CPUが攻撃役3体・相手ブロッカー1体なら、1体ブロックされても残り2体でシールドを削れる。
+  // 当てる順は、ブロッカーが居れば弱い攻撃役から（ブロッカーを1体ずつ消費させ強い攻撃役を温存）、
+  // 居なければ最大ブレイカーから（一度に多くのシールドを割る）。
+  // ※ 1対1などブロッカーを上回れない場面では従来どおり下の単体評価に任せ、無駄な自滅は避ける。
+  if(attackers.length>ctx.oppUntappedBlockers.length){
     let chosen;
     if(ctx.oppUntappedBlockers.length===0){
-      // ブロッカー無し：最大ブレイカーで即ダイレクト
+      // ブロッカー無し：最大ブレイカーで最大量を割る／ダイレクト
       chosen=attackers.slice().sort((a,b)=>cpuBreakerCount(b)-cpuBreakerCount(a))[0];
     }else{
       // ブロッカー有り：弱い攻撃役を先にぶつけてブロッカーを1体ずつ消費させる
       chosen=attackers.slice().sort((a,b)=>getAtkPower(a)-getAtkPower(b))[0];
     }
-    return {attacker:chosen,target:{type:'direct'},score:Infinity};
+    if(ctx.oppShields===0){
+      return {attacker:chosen,target:{type:'direct'},score:Infinity};   // 勝ち確定
+    }
+    return {attacker:chosen,target:{type:'shield'},score:1000};         // シールド残りでも物量で押し切る
   }
 
   const targets=[];
@@ -5123,12 +5129,53 @@ function cpuTryLinks(p){
   }
   return false;
 }
+// CPUのエクTジア演出：成立は確実（人間のような順番チャレンジは無し）だが、
+// 見栄えのため手札にある0を「足りない色だけ」場に1枚ずつ召喚し、4色そろえてから
+// 「エクTジア！」を表示して勝利する。勝ち確定の局面なので5の墓地回収などの副作用は通さない。
+function cpuDeclareExTjia(p){
+  if(CPU._exTjiaDeclaring)return;     // 二重起動防止
+  CPU._exTjiaDeclaring=true;
+  const pl=G.players[p];
+  const order=['blue','green','yellow','red'];   // 並べる順（演出用）
+  const onField=new Set(pl.field.filter(c=>c.num===0).map(c=>c.color));
+  // 場に足りない色の0を手札から探して召喚キューに積む
+  const queue=[];
+  for(const col of order){
+    if(onField.has(col))continue;
+    const z=pl.hand.find(c=>c.num===0&&c.color===col);
+    if(z)queue.push(z);
+  }
+  toast('CPU: ⭐エクTジア宣言！');
+  const finish=()=>{
+    if(G.gameOver)return;
+    renderAll();
+    setTimeout(()=>{
+      if(typeof playExTBGM==='function')playExTBGM('bgm-ext');
+      if(typeof fxExTjia==='function')fxExTjia(p);
+      toast('CPU: 🎉 エクTジア成立！！');
+      setTimeout(()=>winGame(p,'エクTジア！（0の4色）'),1400);
+    },500);
+  };
+  const summonNext=()=>{
+    if(G.gameOver)return;
+    if(!queue.length){ finish(); return; }
+    const z=queue.shift();
+    pl.hand=pl.hand.filter(c=>c.id!==z.id);
+    z.tapped=false; z.summonedThisTurn=true; z.linkedWith=null; z.linkRoot=false; z.speedAttacker=false;
+    pl.field.push(z);
+    if(typeof fxSummon==='function')fxSummon(p,z);
+    toast(`CPU: ${CJ[z.color]}0 を召喚`);
+    renderAll();
+    setTimeout(summonNext,750);
+  };
+  setTimeout(summonNext,500);
+}
 // 召喚1手
 function cpuSummonStep(p){
   if(G.gameOver)return;
   if(G.turn!==p)return;  // ターンが変わっていたら古いsetTimeoutを無視（突然自分のターンになるバグ防止）
-  // エクTジア成立なら即勝利（CPUは正しい順を知っている）
-  if(hasExTjia(p)){ toast('CPU: ⭐エクTジア宣言！'); setTimeout(()=>winGame(p,'エクTジア！（0の4色）'),900); return; }
+  // エクTジア成立なら勝利（成立は確実）。演出として手札の0を場に並べてから宣言する。
+  if(hasExTjia(p)){ cpuDeclareExTjia(p); return; }
   if(cpuTryLinks(p))return;                          // リンク（doLinkがphaseSummonを再呼び出し）
   const pick=cpuChooseBestPlay(p);
   if(pick){ cpuExecSummon(p,pick); return; }
@@ -5312,7 +5359,7 @@ function execCreatureAttackWithBlock(atk,target,p){
 const _origPhaseUntap=phaseUntap;
 phaseUntap=function(){
   _origPhaseUntap.apply(this,arguments);
-  if(!G.gameOver && isCpu(G.turn)){ CPU._hirabonAttackDone=false; setBar(`🤖 CPUのターン`,[]); setTimeout(phaseDraw,800); }
+  if(!G.gameOver && isCpu(G.turn)){ CPU._hirabonAttackDone=false; CPU._exTjiaDeclaring=false; setBar(`🤖 CPUのターン`,[]); setTimeout(phaseDraw,800); }
 };
 const _origPhaseCharge=phaseCharge;
 phaseCharge=function(){
