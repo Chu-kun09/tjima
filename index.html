@@ -1670,20 +1670,32 @@ function show7HandPicker(p,op,isOpponent){
 function show7FieldPicker(p,op){
   const field=G.players[op].field;
   showCardPicker(`${ONLINE.names[op]||`P${op}`}のフィールドから選択`,'選択して決定を押す',field,op,false,
-    (card)=>{
-      closeModal();
-      G.players[op].field=G.players[op].field.filter(c=>c.id!==card.id);
-      // リンクしていた場合: パートナーのリンクを解除して場に残す
-      if(card.linkedWith){
-        const partner=card.linkedWith;
-        partner.linkedWith=null; partner.linkRoot=false; partner.speedAttacker=false;
-        card.linkedWith=null;
-      }
-      card.linkRoot=false;
-      show7DestModal(p,card,op,'field');
-    },
+    (card)=>{ closeModal(); start7FieldMove(p,op,card); },
     [{label:'戻る',cls:'n',fn:()=>{closeModal();show7ZonePicker(p);}}]
   );
+}
+// リンクペアを7で動かすとき、どちらの1枚を移動するか発動者に選ばせる（残り1枚はリンク解除して場に残る）
+function choose7LinkedCard(p,card,proceed){
+  if(!card.linkedWith){ proceed(card); return; }
+  const a=card, b=card.linkedWith;
+  showSimpleModal('リンク：どちらを移動する？',[
+    {label:`${CJ[a.color]}${a.num} を移動`,cls:'o',fn:()=>{closeModal();proceed(a);}},
+    {label:`${CJ[b.color]}${b.num} を移動`,cls:'o',fn:()=>{closeModal();proceed(b);}},
+  ],'7の効果で動かせるのは1枚だけ。残り1枚はリンクが解けて場に残ります',p);
+}
+// フィールドのカード(またはリンクペア)を選んだあと、移動する1枚を確定してから移動先へ
+function start7FieldMove(p,op,card){
+  const move=(chosen)=>{
+    G.players[op].field=G.players[op].field.filter(c=>c.id!==chosen.id);
+    if(chosen.linkedWith){
+      const partner=chosen.linkedWith;
+      partner.linkedWith=null; partner.linkRoot=false; partner.speedAttacker=false;
+      chosen.linkedWith=null;
+    }
+    chosen.linkRoot=false;
+    show7DestModal(p,chosen,op,'field');
+  };
+  choose7LinkedCard(p,card,move);
 }
 
 function show7ManaPicker(p,op){
@@ -1721,16 +1733,8 @@ function on7FieldTap(cardId,cardOwner){
   const p=G._7selectMode.owner;
   const card=G.players[cardOwner].field.find(c=>c.id===cardId);
   if(!card)return;
-  G.players[cardOwner].field=G.players[cardOwner].field.filter(c=>c.id!==cardId);
-  // リンクしていた場合: パートナーのリンクを解除して場に残す
-  if(card.linkedWith){
-    const partner=card.linkedWith;
-    partner.linkedWith=null; partner.linkRoot=false; partner.speedAttacker=false;
-    card.linkedWith=null;
-  }
-  card.linkRoot=false;
   G._7selectMode=null;
-  show7DestModal(p,card,cardOwner,'field');
+  start7FieldMove(p,cardOwner,card);   // リンクなら「どちらを動かすか」を選ばせる
 }
 
 // 移動先モーダル
@@ -1786,6 +1790,15 @@ function restoreCard(card,op,zone){
 }
 
 function exec7Move(p,card,origOwner,dest,to){
+  // 7の効果対象は1枚のみ。リンク中のカードを動かす場合は必ずリンクを解除し、
+  // 相方は場に残す（＝移動するのは選ばれた1枚だけ）。どの経路から来ても安全になるよう
+  // ここで一括して解除する。
+  if(card.linkedWith){
+    const partner=card.linkedWith;
+    if(partner){ partner.linkedWith=null; partner.linkRoot=false; partner.speedAttacker=false; }
+    card.linkedWith=null;
+  }
+  card.linkRoot=false;
   card.tapped=false;
   if(dest==='hand'){card._faceDown=false;G.players[to].hand.push(card);}
   else if(dest==='mana'){card._faceDown=false;G.players[to].mana.push(card);}
@@ -4335,9 +4348,14 @@ function cpu7BestFinalMove(p, ctx){
   const me=G.players[p], en=G.players[opp];
   const myAttackers=me.field.filter(c=>canAttack(p,c));
   const myBreakTotal=myAttackers.reduce((s,c)=>s+cpuBreakerCount(c),0);
+  const myUnits=me.field.filter(c=>!c.linkedWith||c.linkRoot);
+  const myBreakNext=myUnits.reduce((s,c)=>s+cpuBreakerCount(c),0);  // 次ターン全員アンタップ前提
+  const oppHandEmpty=en.hand.length===0;
+  const zoneOf=(c)=> me.hand.includes(c)?'hand': me.mana.includes(c)?'mana': me.graveyard.includes(c)?'grave':'field';
   const candidates=[];
 
-  // 【攻撃寄り1】相手の未タップブロッカーを除去 → 攻撃が通る
+  // 【攻撃1】相手の未タップブロッカーを墓地送り → 攻撃が通る
+  //   ※ 手札やデッキへ戻すと相手に札を残す/戻すので、除去は基本「墓地」。
   ctx.oppUntappedBlockers.forEach(b=>{
     const remaining=ctx.oppUntappedBlockers.length-1;
     let val=cpuRemovalValue(b)*CPU_W.removal;
@@ -4346,32 +4364,80 @@ function cpu7BestFinalMove(p, ctx){
       if(myBreakTotal>=ctx.oppShields) val+=CPU_W.atkShield*ctx.oppShields+CPU_W.aggro*5+10;
       else val+=myBreakTotal*(CPU_W.atkShield+ctx.aggro*CPU_W.atkAggro);
     }
-    candidates.push({card:b,fromOwner:opp,dest:'deck',toOwner:opp,score:val,label:`攻撃:相手ブロッカー${CJ[b.color]}${b.num}をデッキ送り`});
+    candidates.push({card:b,fromOwner:opp,fromZone:'field',dest:'grave',toOwner:opp,defensive:false,score:val,label:`相手ブロッカー${CJ[b.color]}${b.num}を墓地送り`});
   });
 
-  // 【防御寄り1】相手の攻撃可能クリーチャー(最大打点)をデッキ送り → 被弾減
-  const oppAttackers=ctx.enUnits.filter(c=>!c.linkedWith||c.linkRoot)
-    .sort((a,b)=>cpuBreakerCount(b)-cpuBreakerCount(a));
+  // 【攻撃2】相手シールドを直接墓地へ（割らずに減らす＝割り切りに近づく／相手に手札を与えない）
+  const oppShieldIdx=en.shields.findIndex(s=>s!==null);
+  if(oppShieldIdx!==-1 && ctx.oppShields>0){
+    let val=CPU_W.atkShield*1.3 + ctx.aggro*CPU_W.atkAggro;
+    if(ctx.oppShields<=2) val+=4;                                   // 残り少ない＝リーサルに近い
+    if(myAttackers.length>ctx.oppUntappedBlockers.length) val+=3;   // 押し切れる布陣なら直後に効く
+    candidates.push({shield:true,shieldIdx:oppShieldIdx,fromOwner:opp,fromZone:'shield',dest:'grave',toOwner:opp,defensive:false,score:val,label:`相手シールドを墓地送り`});
+  }
+
+  // 【妨害】終盤・相手手札0・現在ブロッカー無し・こちらが次ターンの攻撃で勝てる布陣 →
+  //   相手フィールドの非ブロッカー(0/4/5など)をデッキ上に戻し、次ドローを腐らせる。
+  //   ※ 墓地送りだと相手が次にブロッカー(1/3)を引いて守る目が残るが、デッキ上固定なら
+  //      守り札を引かせず確実に詰められるので、この局面ではデッキ戻しを最優先する。
+  //   ※ 現在ブロッカーが居るなら、それを墓地送りする方(上の候補)が良いのでデッキ戻しはしない。
+  if(oppHandEmpty && ctx.oppShields>0 && ctx.oppUntappedBlockers.length===0
+     && myUnits.length>0 && myBreakNext>=ctx.oppShields){
+    const junk=ctx.enUnits.filter(c=>c.num!==1&&c.num!==3)               // 守りに使えない＝戻して困らせる
+      .sort((a,b)=>{const pri=n=>(n===0?3:n===4?3:n===5?2:1);return pri(b.num)-pri(a.num);});
+    if(junk.length){
+      candidates.push({card:junk[0],fromOwner:opp,fromZone:'field',dest:'deck',toOwner:opp,defensive:false,score:20,label:`相手の${CJ[junk[0].color]}${junk[0].num}をデッキ上に戻し引きを腐らせる`});
+    }
+  }
+
+  // 【防御1】相手の最大アタッカーを墓地送り → 被弾減
+  const oppAttackers=ctx.enUnits.slice().sort((a,b)=>cpuBreakerCount(b)-cpuBreakerCount(a));
   if(oppAttackers.length){
     const big=oppAttackers[0];
     const removedBreak=cpuBreakerCount(big);
-    const urgency=Math.max(1,3-ctx.dangerLevel); // 不利なほど価値大
+    const urgency=Math.max(1,3-ctx.dangerLevel);                    // 不利なほど価値大
     const val=cpuRemovalValue(big)*CPU_W.removal + removedBreak*CPU_W.defShield*urgency*0.6;
-    candidates.push({card:big,fromOwner:opp,dest:'deck',toOwner:opp,score:val,label:`防御:相手アタッカー${CJ[big.color]}${big.num}をデッキ送り`});
+    candidates.push({card:big,fromOwner:opp,fromZone:'field',dest:'grave',toOwner:opp,defensive:true,score:val,label:`相手アタッカー${CJ[big.color]}${big.num}を墓地送り`});
   }
 
-  // 【防御寄り2】自分の8を手札/マナ/墓地から引っ張ってシールドに伏せる
-  //   特に自シールドが薄い(≤2)とき有効。ST8発動なら相手を全タップして7総攻撃を抑止。
+  // 【展開1】自分の2を手札/マナ/墓地から場へ（召喚時ヒラボン＝同番号を一括破壊＋打点本体）
+  //   ・cpuHirabonBest の純利益(hb.gain)は「相手の同番号を合算した除去益 − 自分の同番号被害
+  //     − テンポ損 ＋ エクTジア妨害」を内包。よって複数の脅威を巻き込めるほど高く、
+  //     逆に自分も同番号を持つ（巻き添えになる）ときは自動的に低く出る（ユーザー指摘のデメリット）。
+  //   ・加えて2が盤面に残るので展開＝次以降のヒラボン圧という将来価値も足す。
+  //   → 大型でも複数でも、単体除去（墓地/デッキ送り）より効率的なら2召喚が選ばれる。
+  const my2=[...me.hand,...me.mana,...me.graveyard].find(c=>c.num===2);
+  if(my2){
+    const hb=cpuHirabonBest(ctx);
+    // 宣言番号で消える相手クリーチャーのブレイク合計＝被弾減（単体除去候補と同じ防御クレジット）。
+    const urgency=Math.max(1,3-ctx.dangerLevel);
+    const oppBreakRemoved=en.field.filter(c=>c.num===hb.num&&(!c.linkedWith||c.linkRoot))
+                                  .reduce((s,c)=>s+cpuBreakerCount(c),0);
+    const val = getAtkPower(my2)*CPU_W.body + cpuBreakerCount(my2)*CPU_W.breaker*0.5      // 本体（展開）
+              + Math.max(0,hb.gain)*CPU_W.removal*0.85                                     // 破壊純利益（複数破壊/自爆デメリット込み）
+              + oppBreakRemoved*CPU_W.defShield*urgency*0.6                                // 脅威除去による被弾減（墓地送り候補と同等）
+              + 1.5;                                                                       // 場に2が残る将来価値
+    candidates.push({card:my2,fromOwner:p,fromZone:zoneOf(my2),dest:'field',toOwner:p,defensive:false,score:val,label:`自分の2を場に出す（ヒラボン宣言${hb.num}）`});
+  }
+
+  // 【展開2】自分の3か4を場に出して 3-4 リンクを作る → 場全体がスピードアタッカー（今ターン追撃）
+  const fieldHas=(n)=>me.field.some(c=>c.num===n&&(!c.linkedWith||c.linkRoot));
+  let linkCard=null;
+  if(fieldHas(3)) linkCard=[...me.hand,...me.mana,...me.graveyard].find(c=>c.num===4);
+  if(!linkCard && fieldHas(4)) linkCard=[...me.hand,...me.mana,...me.graveyard].find(c=>c.num===3);
+  if(linkCard){
+    // 追撃できる頭数が増えるほど価値大。攻めの局面(aggro)で特に有効。
+    const extraAtk=myUnits.length; // リンクで場全体がSA→既存の召喚酔いも含め殴れる
+    const val=getAtkPower(linkCard)*CPU_W.body + CPU_W.breaker + ctx.aggro*CPU_W.aggro*2 + Math.min(extraAtk,3)*CPU_W.atkShield*0.5 + 2;
+    candidates.push({card:linkCard,fromOwner:p,fromZone:zoneOf(linkCard),dest:'field',toOwner:p,defensive:false,score:val,label:`自分の${linkCard.num}を出して3-4リンク`});
+  }
+
+  // 【防御2】自分の8を手札/マナ/墓地からシールドに伏せる（シールドが薄いとき）
   if(ctx.myShields<=2){
     const my8=[...me.hand,...me.mana,...me.graveyard].find(c=>c.num===8);
     if(my8){
-      const fromOwner=p;
-      // 8をシールドに伏せる価値：シールド+1の防御 + ST8の脅威（相手の攻撃を渋らせる）
       const val=CPU_W.defShield*2.5 + (3-ctx.myShields)*2 + 4;
-      // どのゾーンにあるか
-      let zone='hand';
-      if(me.mana.includes(my8))zone='mana'; else if(me.graveyard.includes(my8))zone='grave';
-      candidates.push({card:my8,fromOwner:p,dest:'shield',toOwner:p,fromZone:zone,score:val,label:`防御:自分の8をシールドに伏せる`});
+      candidates.push({card:my8,fromOwner:p,fromZone:zoneOf(my8),dest:'shield',toOwner:p,defensive:true,score:val,label:`自分の8をシールドに伏せる`});
     }
   }
 
@@ -4590,10 +4656,10 @@ function cpuScoreCard(p,card,ctx){
       // 7の最終効果は攻守バランスで決める（cpu7BestFinalMoveが攻撃/防御パターンを比較）
       const fm=cpu7BestFinalMove(p,ctx);
       if(fm){
-        plan.finalMove=fm;                 // 移動先の詳細プラン
-        plan.finalMoveTargetId=fm.card.id; // 後方互換
+        plan.finalMove=fm;                       // 移動先の詳細プラン
+        plan.finalMoveTargetId=fm.card?fm.card.id:null; // 後方互換（シールド源はcard無し）
         score+=fm.score;
-        if(inDanger && /防御/.test(fm.label))score+=defBonus*0.5;
+        if(inDanger && fm.defensive)score+=defBonus*0.5;
       }else if(ctx.enUnits.length){
         // フォールバック：最強の敵をデッキ送り
         const t=ctx.enUnits.reduce((a,b)=>cpuRemovalValue(a)>=cpuRemovalValue(b)?a:b);
@@ -5435,15 +5501,29 @@ show7PickModal=function(p){
     if(fm){
       CPU._7plan=null;
       const owner=fm.fromOwner;
-      // 移動元ゾーンからカードを除去
-      let srcZone=fm.fromZone||'field';
-      const pool=G.players[owner][srcZone]||[];
-      const tgt=pool.find(c=>c.id===fm.card.id) || G.players[owner].field.find(c=>c.id===fm.card.id);
+      const zone=fm.fromZone||'field';
+      let tgt=null;
+      if(zone==='shield'){
+        // 相手シールド先頭（裏向き）を取り出す
+        const sh=G.players[owner].shields;
+        let idx=(fm.shieldIdx!=null && sh[fm.shieldIdx])?fm.shieldIdx:sh.findIndex(s=>s!==null);
+        if(idx!==-1 && sh[idx]){ tgt=sh[idx]; sh[idx]=null; tgt._faceDown=true; }
+      }else if(zone==='deck'){
+        const dk=G.players[owner].deck;
+        tgt=dk[dk.length-1]; if(tgt){ dk.pop(); tgt._faceDown=true; }
+      }else{
+        // field / hand / mana / grave(=graveyard)
+        const zarr=(zone==='grave')?'graveyard':zone;
+        tgt=(G.players[owner][zarr]||[]).find(c=>c.id===(fm.card&&fm.card.id))
+            || G.players[owner].field.find(c=>c.id===(fm.card&&fm.card.id));
+        if(tgt){
+          // 元ゾーンから取り除く（リンク解除は exec7Move 側で実施）
+          ['field','hand','mana','graveyard'].forEach(z=>{
+            G.players[owner][z]=G.players[owner][z].filter(c=>c.id!==tgt.id);
+          });
+        }
+      }
       if(tgt){
-        // 元ゾーンを特定して取り除く
-        ['field','hand','mana','graveyard'].forEach(z=>{
-          G.players[owner][z]=G.players[owner][z].filter(c=>c.id!==tgt.id);
-        });
         toast(`CPU: 7効果 → ${fm.label}`);
         setTimeout(()=>exec7Move(p,tgt,owner,fm.dest,fm.toOwner),400);
         return;
