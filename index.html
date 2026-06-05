@@ -5317,9 +5317,22 @@ function cpuHirabonAttackPlan(p, ctx){
 
   // 手札が薄いほど1枚失う痛みは大きい（特に2枚以下）。
   const handAfter=me.hand.length-1;
-  let handPenalty=0;
-  if(handAfter<=1) handPenalty=8;
-  else if(handAfter<=2) handPenalty=3;
+  let basePenalty=0;
+  if(handAfter<=1) basePenalty=8;
+  else if(handAfter<=2) basePenalty=3;
+
+  // ── 例外：薄い手札でもヒラボンを使うべき局面 ─────────────────────────────
+  //  (a) ピンチ：次ターン受ける攻撃が守備を上回り敗北圏（dangerLevel<=1）。
+  //      宣言で相手の脅威を減らせるなら、手札温存より生存を優先する。
+  //  (b) 突破：宣言で相手の未タップブロッカーを減らし、攻撃役がブロッカー数を上回る
+  //      （あふれた攻撃が通る＝シールドを割り続けてダイレクトに繋がる）。
+  //  これらでは手札コストをほぼ撤廃して、ヒラボンを使えるようにする。
+  const inDanger = ctx.dangerLevel<=1;
+  const oppBlkAfter = ctx.oppUntappedBlockers.filter(x=>x.num!==b.num).length;     // 宣言後に残る相手ブロッカー
+  const myAtkCount  = me.field.filter(c=>canAttack(p,c)&&(!c.linkedWith||c.linkRoot)).length;
+  const clearsBlocker = oppBlkAfter < ctx.oppUntappedBlockers.length;             // 宣言で実際にブロッカーが減る
+  const enablesBreakthrough = clearsBlocker && myAtkCount>oppBlkAfter && myAtkCount>0; // 攻撃役があふれて通る
+  let handPenalty = (inDanger||enablesBreakthrough) ? Math.min(basePenalty,1) : basePenalty;
 
   const marginal=b.gain - bestDiscard.cost - handPenalty;
   return {attacker, declareNum:b.num, gain:b.gain, discardCard:bestDiscard.card, discardCost:bestDiscard.cost, marginal};
