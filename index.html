@@ -1225,55 +1225,64 @@ function cpuBreakerCountLabel(card){
 
 function doShieldBreak(atk,p){
   const opp=p===1?2:1,oppPl=G.players[opp];
-  const idx=oppPl.shields.findIndex(s=>s!==null);
-  if(idx===-1){execDirectAttack(atk,p);return;}
-  const sc=oppPl.shields[idx];
-  oppPl.shields[idx]=null;
+  if(oppPl.shields.filter(Boolean).length===0){execDirectAttack(atk,p);return;}
   atk.tapped=true;
   if(atk.linkedWith)atk.linkedWith.tapped=true;
   G.atkCard=null;
   pushState();
 
-  // ブレイカー数を決定
   const isTriple=(atk.num===0);
   const isDouble=(atk.num===7||atk.num===9||(atk.linkedWith&&(atk.num===5||atk.linkedWith.num===5)));
+  const breakCount=isTriple?3:(isDouble?2:1);
   fxShieldBreak(opp,isTriple);
-  renderAll();
 
-  if(isTriple){
-    // トリプル：1枚目は直接墓地、残り2枚は手札
-    const left=oppPl.shields.filter(Boolean).length;
-    if(left>0){
-      sendToGrave(opp,sc);
-      setTimeout(()=>tripleMore(opp,p,2,()=>checkDirect(opp,p)),700);
-    }else{
-      breakShield(opp,sc);
-      checkDirect(opp,p);
-    }
-  }else if(isDouble){
-    // ダブル：1枚目を処理、シールドが残っていれば2枚目
-    breakShield(opp,sc);
-    const left2=oppPl.shields.filter(Boolean).length;
-    if(left2>0){
-      setTimeout(()=>{
-        const idx2=oppPl.shields.findIndex(s=>s!==null);
-        if(idx2!==-1){
-          const sc2=oppPl.shields[idx2];
-          oppPl.shields[idx2]=null;
-          fxShieldBreak(opp,false);
-          breakShield(opp,sc2);
-          renderAll();
-        }
-        checkDirect(opp,p);
-      },450);
-    }else{
-      checkDirect(opp,p);
-    }
-  }else{
-    breakShield(opp,sc);
-    checkDirect(opp,p);
+  // ── 割るシールドを一括で取り出す（途中でモーダルを挟まない）─────────────────
+  const taken=[];
+  for(let i=0;i<breakCount;i++){
+    const idx=oppPl.shields.findIndex(s=>s!==null);
+    if(idx===-1)break;
+    taken.push(oppPl.shields[idx]); oppPl.shields[idx]=null;
   }
   renderAll();
+
+  // ── 取り出したシールドを処理：ST候補(6/8)は pendingST に“集約”、通常札は手札へ。
+  //    トリプルで2枚以上割るときのみ1枚目は直接墓地（従来仕様）。
+  //    ここではモーダルを出さず、後処理は最後に1回だけ行う（＝連続ブレイクでの
+  //    モーダル多重表示・上書き・デッドロックを防ぐ）。
+  G.pendingST=G.pendingST||[];
+  let normalToHand=0;
+  taken.forEach((sc,i)=>{
+    if(sc._faceDown)sc._faceDown=false;
+    if(isTriple && i===0 && taken.length>=2){
+      sendToGrave(opp,sc);                       // トリプルで複数割るときの1枚目は墓地
+    }else if(sc.num===6||sc.num===8){
+      G.pendingST.push({player:opp,card:sc});    // STは集約（処理は後でまとめて）
+    }else{
+      G.players[opp].hand.push(sc); normalToHand++;
+    }
+  });
+  renderAll();
+
+  if(oppPl.shields.filter(Boolean).length===0){
+    toast(`🔥 P${opp}のシールドが全部割れた！`);
+  }
+
+  // ── 後処理を“1回だけ”：ST → 確認 → 攻撃フェーズ継続 ───────────────────────
+  if(G.pendingST.length){
+    // processSTは防御側がCPUなら自動解決、人間ならモーダル表示。
+    // 1枚なら単体モーダル、複数なら一覧モーダルで安全に順次解決し、完了後 stFinish→phaseAttack。
+    setTimeout(processST,500);
+  }else if(normalToHand>0 && !isCpu(opp)){
+    // 人間が受けた通常シールドは確認モーダルを1回だけ表示してから継続
+    setTimeout(()=>{
+      showSimpleModal('シールド確認',[
+        {label:'OK',cls:'g',fn:()=>{closeModal();if(G.phase==='attack')setTimeout(phaseAttack,200);}},
+      ],'シールドが手札に加わりました',opp);
+    },350);
+  }else{
+    // STも人間の確認も不要（CPUが受けた等）→ そのまま攻撃継続
+    if(G.phase==='attack')setTimeout(phaseAttack,400);
+  }
 }
 
 function tripleMore(opp,p,rem,done){
@@ -4450,6 +4459,27 @@ function cpuScoreCard(p,card,ctx){
   if(!canSummon(p,card))return {score:-Infinity,plan:null};
   const cost=getSummonCost(p,card);
   let score=0; const plan={cardId:card.id};
+
+  // ── 自分のアタック時ヒラボンと番号が衝突する“無駄召喚”を避ける ─────────────
+  // このターン、場の2でアタック時ヒラボンを撃つ見込みがあり、その宣言番号が
+  // これから出すカードと同じだと、召喚しても自分のヒラボンで一緒に壊れてしまう。
+  // ヒラボンは手札を対象にしないので、その番号は手札に温存する方が良い → 召喚しない。
+  // 「実際に場に出した盤面」で判定するため、出すことで宣言先が別番号に変わって生き残る
+  // ケースでは通常どおり召喚を検討する（過剰抑制を避ける）。
+  if(card.num!==2 && ctx.me.field.some(c=>c.num===2&&canAttack(p,c)&&(!c.linkedWith||c.linkRoot))){
+    const me=ctx.me, handBak=me.hand;
+    me.hand=me.hand.filter(c=>c.id!==card.id);   // 捨て札候補から自身を除き
+    me.field.push(card);                          // 仮に場に出した状態を作る
+    let collide=false;
+    try{
+      const hpAfter=cpuHirabonAttackPlan(p,ctx);
+      collide=!!(hpAfter && hpAfter.marginal>2 && hpAfter.declareNum===card.num);
+    }finally{
+      me.field.pop(); me.hand=handBak;            // 盤面を必ず元に戻す
+    }
+    if(collide) return {score:-50, plan};         // 出しても自爆するだけ → 召喚しない
+  }
+
   if(card.num!==8)score+=getAtkPower(card)*CPU_W.body;
   const willHaveSpeed=ctx.me.field.some(c=>c.linkedWith&&((c.num===3&&c.linkedWith.num===4)||(c.num===4&&c.linkedWith.num===3)));
   const breakDelay=willHaveSpeed?1.0:0.5;
