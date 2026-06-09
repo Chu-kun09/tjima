@@ -4310,9 +4310,20 @@ function cpuHirabonBest(ctx){
     }
     // ブロッカー除去で攻撃が通るなら、突破価値を gain に上乗せして宣言番号を選ぶ判断に反映
     if(blkByNum[n] && myAttackers.length){
-      const remaining=totalBlockers-blkByNum[n];
-      if(remaining===0) gain += 5 + myAttackers.length*1.5; // 全ブロッカー除去＝攻撃が通る
-      else gain += blkByNum[n]*1.5;
+      const remaining=totalBlockers-blkByNum[n];               // 宣言後に残る相手ブロッカー
+      // 宣言番号(n)で自軍アタッカーを巻き込まずに生き残る攻撃役の数。
+      // この生存攻撃役が、ブロッカーを除去した後に実際に殴れる。
+      const survivingAtk=myAttackers.filter(c=>c.num!==n).length;
+      if(remaining===0 && survivingAtk>0){
+        // 全ブロッカーを除去でき、生き残る攻撃役がいる＝攻撃が確実に通る。
+        // 相手シールドが0枚なら、その攻撃はそのままダイレクトアタック＝勝ち確定。
+        // シールドが無い＝シールドトリガー(ST)のリスクも一切無いので、
+        // 単なる除去価値（相手0の高い攻撃力など）より圧倒的に優先して必ずこの宣言を選ぶ。
+        if(ctx.oppShields===0) gain += 1000;                   // ダイレクト勝ち確定（最優先）
+        else gain += 5 + survivingAtk*1.5;                     // シールドは残るが押し込める
+      }else{
+        gain += blkByNum[n]*1.5;                               // 一部のブロッカーだけ除去
+      }
     }
     if(gain>best.gain)best={num:n,gain};
   }
