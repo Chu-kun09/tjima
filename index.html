@@ -439,7 +439,7 @@ getRedirectResult(auth).then(result=>{
   border-radius:20px;font-family:'Fredoka One',cursive;font-size:13px;padding:5px 11px;cursor:pointer;
   backdrop-filter:blur(6px);box-shadow:0 2px 8px rgba(0,0,0,.4);
   transition:background .15s;">
-  🎵 ON
+  🔇 OFF
 </button>
 <!-- フリーズ対策: 小さいリセットボタン -->
 <button id="reset-btn" onclick="emergencyReset()"
@@ -1232,7 +1232,8 @@ function doShieldBreak(atk,p){
   pushState();
 
   const isTriple=(atk.num===0);
-  const isDouble=(atk.num===7||atk.num===9||(atk.linkedWith&&(atk.num===5||atk.linkedWith.num===5)));
+  // ダブルブレイカーは7と9のみ。5-5リンクはシングルブレイカー（1枚）。
+  const isDouble=(atk.num===7||atk.num===9);
   const breakCount=isTriple?3:(isDouble?2:1);
   fxShieldBreak(opp,isTriple);
 
@@ -2245,8 +2246,8 @@ function doShieldBreakOnline(atk,p){
 
   // ブレイカー数
   const isTriple=(atk.num===0);
-  const isDouble=(atk.num===7||atk.num===9||
-    (atk.linkedWith&&(atk.num===5||atk.linkedWith.num===5)));
+  // ダブルブレイカーは7と9のみ。5-5リンクはシングルブレイカー（1枚）。
+  const isDouble=(atk.num===7||atk.num===9);
 
   atk.tapped=true;
   if(atk.linkedWith)atk.linkedWith.tapped=true;
@@ -3740,8 +3741,7 @@ function showTitleScreen(){
   const titleScreen = document.getElementById('title-screen');
   if(titleScreen) titleScreen.classList.remove('hidden');
   initTitleCards();
-  // BGMを開始（ユーザー操作後なら自動再生できる）
-  setTimeout(startBGM, 500);
+  // BGMは自動再生しない。右上の🎵ボタンを押したときだけ鳴らす（既定オフ）。
 
   // ユーザー情報を表示
   const usernameEl = document.getElementById('title-username');
@@ -4739,6 +4739,25 @@ function cpuChooseBestPlay(p,minScore=0.5){
   const emergency = ctx.myShields<=2 || ctx.dangerLevel<=0;
   const threshold = emergency ? -6 : minScore;
   if(best.score<threshold)return null;
+
+  // ── コスト軽減カード(5)を有料カードより先に出す ──────────────────────────
+  // 場に5があると他カードのコストが-1（5-5リンクで-5）。よって、これから有料カード
+  // (コスト≥2)を出すなら、先に5を出しておくと後続が割引され、浮いたマナでもう1枚出せる
+  // ことがある。0など無料カードは順不同なので対象外。
+  // 条件：bestが有料・まだ場に5が無い・手札に出せる5がある・5を先に出してもbestを
+  //       割引価格で出せるだけのマナが残る（＝本命を失わない）・5自体も出す価値がある。
+  const bestCost=getSummonCost(p,best.card);
+  if(bestCost>=2 && best.card.num!==5 && !G.players[p].field.some(c=>c.num===5)){
+    const five=G.players[p].hand.find(c=>c.num===5 && canSummon(p,c));
+    if(five){
+      const r5=cpuScoreCard(p,five,ctx);
+      const fiveCost=getSummonCost(p,five);
+      const bestCostAfter=Math.max(1,bestCost-1);            // 5が場に出た後のbestの割引コスト
+      if(r5.score>threshold && availMana(p)-fiveCost>=bestCostAfter){
+        return {card:five,score:r5.score,plan:r5.plan,cost:fiveCost};
+      }
+    }
+  }
   return best;
 }
 
