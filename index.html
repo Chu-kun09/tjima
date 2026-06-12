@@ -1842,6 +1842,22 @@ function exec7Move(p,card,origOwner,dest,to){
     if(card.num===7){setTimeout(()=>show7PickModal(p),300);return;}
     if(card.num===2){showHirabonDeclareModal(p,false,null);return;}
     if(card.num===6){show6BounceModal(p);return;}
+    // 8(片スパ)は呪文カード。フィールドに出ても場には残らず、
+    // 効果（7の効果を使ったプレイヤーpから見た相手フィールドを全タップ）を
+    // 発動してから墓地へ送る。
+    if(card.num===8){
+      const opp8=p===1?2:1;
+      G.players[opp8].field.forEach(c=>c.tapped=true);
+      G.players[to].field=G.players[to].field.filter(c=>c.id!==card.id);
+      card.tapped=false;card.summonedThisTurn=false;
+      sendToGrave(to,card);
+      fxSpell(p);
+      toast('⚡ 片スパ発動！ 相手フィールドを全タップ');
+      renderAll();
+      checkExTjia(p);
+      setTimeout(()=>{if(G.phase==='summon')phaseSummon();},400);
+      return;
+    }
   }
   checkExTjia(p);
   setTimeout(()=>{if(G.phase==='summon')phaseSummon();},400);
@@ -4292,8 +4308,14 @@ function cpuBreakerCount(card){
   if(card.num===7||card.num===9)return 2;
   return 1;
 }
+/* 徳田さんモード判定：シールドにST(6/8)が仕込まれ、手札は小型中心の超攻撃型 */
+function cpuIsTokuda(p){ return !!(CPU.enabled && CPU.tokuda && isCpu(p)); }
+
 function cpuHirabonBest(ctx){
   const {me,en}=ctx; let best={num:0,gain:-Infinity};
+  const TOKUDA=cpuIsTokuda(ctx.p);
+  // 徳田さん：相手のマナ破壊を強く重視（マナを縛りながらシールドを殴り続ける戦略）
+  const oppManaW=TOKUDA?CPU_W.manaHit*2.8:CPU_W.manaHit;
   // 相手の未タップブロッカーの番号ごとの枚数（除去できると攻撃が通る）
   const blkByNum={};
   (ctx.oppUntappedBlockers||[]).forEach(c=>{ blkByNum[c.num]=(blkByNum[c.num]||0)+1; });
@@ -4305,9 +4327,15 @@ function cpuHirabonBest(ctx){
   for(let n=0;n<=9;n++){
     let oppLoss=0,myLoss=0;
     en.field.forEach(c=>{if(c.num===n)oppLoss+=cpuRemovalValue(c);});
-    en.mana .forEach(c=>{if(c.num===n)oppLoss+=cpuRemovalValue(c)*CPU_W.manaHit;});
+    // 4はマナから破壊されてもマナへ戻る（sendToGrave仕様）＝実害ゼロなので、
+    // 双方ともマナの4は損失に数えない（従来は誤って計上していた）。
+    if(n!==4){
+      let manaHits=0;
+      en.mana.forEach(c=>{if(c.num===n){oppLoss+=cpuRemovalValue(c)*oppManaW;manaHits++;}});
+      if(TOKUDA&&manaHits>0)oppLoss+=manaHits*1.2;   // マナ1枚=資源1。枚数自体にもテンポ価値を載せる
+    }
     me.field.forEach(c=>{if(c.num===n)myLoss+=(n===4?0:cpuRemovalValue(c));});  // 4は破壊→マナ送りなのでロス0
-    me.mana .forEach(c=>{if(c.num===n)myLoss+=cpuRemovalValue(c)*CPU_W.manaHit;});
+    if(n!==4)me.mana.forEach(c=>{if(c.num===n)myLoss+=cpuRemovalValue(c)*CPU_W.manaHit;});
     if(n===2)myLoss+=2;
     // ── 自軍アタッカー巻き添えのテンポ損 ────────────────────────────────
     // 宣言番号(n)が自分の「今ターン攻撃できる」クリーチャーを巻き添えにすると、
@@ -4479,6 +4507,22 @@ function cpu7BestFinalMove(p, ctx){
     if(my8){
       const val=CPU_W.defShield*2.5 + (3-ctx.myShields)*2 + 4;
       candidates.push({card:my8,fromOwner:p,fromZone:zoneOf(my8),dest:'shield',toOwner:p,defensive:true,score:val,label:`自分の8をシールドに伏せる`});
+    }
+  }
+
+  // 【攻撃3】自分の8を場に出す＝片スパ呪文発動（相手フィールドを全タップして墓地へ）。
+  //   8は場に残らないので、相手の未タップ戦力が多い／こちらが攻め込む布陣のときだけ価値が出る。
+  //   全タップで相手のブロッカーが消え、こちらの攻撃が通る・反撃を受けない効果を見積もる。
+  {
+    const my8=[...me.hand,...me.mana,...me.graveyard].find(c=>c.num===8);
+    const oppUntapped=en.field.filter(c=>!c.tapped&&(!c.linkedWith||c.linkRoot));
+    if(my8 && oppUntapped.length>0){
+      const blockersTapped=ctx.oppUntappedBlockers.length;
+      let val=blockersTapped*CPU_W.removal*0.6           // ブロッカーを寝かせて攻撃を通す
+            + oppUntapped.length*CPU_W.defShield*0.5;    // 相手全体を寝かせ次の被弾を減らす
+      if(blockersTapped>0 && myAttackers.length && myBreakTotal>=ctx.oppShields)
+        val+=CPU_W.atkShield*ctx.oppShields+CPU_W.aggro*4+8; // 全タップ後に割り切れる＝勝ち級
+      candidates.push({card:my8,fromOwner:p,fromZone:zoneOf(my8),dest:'field',toOwner:p,defensive:false,score:val,label:`自分の8を出して片スパ（相手全タップ）`});
     }
   }
 
@@ -5111,6 +5155,16 @@ function cpuBlockersNeeded(ctx){
  *  BUILD : それ以外                      → 盤面構築。シールドは安売りしない */
 function cpuStance(p,ctx){
   if(cpuLethalPlanThisTurn(p,ctx))return 'FINISH';
+  // ── 徳田さんモード：シールドのST(6/8)で受けが強い前提の超攻撃型 ──────────
+  // 通常CPUのように「危険になったら籠城」「詰めが見えるまでシールド温存」はせず、
+  // 本当に詰みかけ（dangerLevel≤0）以外は常に攻め続けてシールドを割りにいく。
+  if(cpuIsTokuda(p)){
+    if(ctx.dangerLevel<=0){
+      if(ctx.dangerLevel<0 && ctx.me.field.some(c=>canAttack(p,c)))return 'RACE';
+      return 'DEFEND';
+    }
+    return 'ATTACK';
+  }
   if(ctx.dangerLevel<=1){
     // 全ブロッカーを壁にしても次ターン割り切られる（dangerLevel<0）なら、
     // 亀になっても負けるだけ → 捨て身で殴り、ST捲りや相手のミスに賭ける。
@@ -5207,8 +5261,11 @@ function cpuChooseAttack(p,minScore=0.01){
    *  相手打点に耐える最小数）だけ確保。温存枠は攻撃不能（召喚酔い）→強い順で埋め、
    *  攻撃に出るのは弱い余剰ブロッカーのみ。 */
   const myUntappedBlk=ctx.me.field.filter(c=>isBlk(c)&&!c.tapped);
-  const reserveCount=(stance==='DEFEND')?myUntappedBlk.length:
-                     (stance==='RACE')?0:cpuBlockersNeeded(ctx);  // RACE=壁も全部攻撃に回す
+  let reserveCount=(stance==='DEFEND')?myUntappedBlk.length:
+                   (stance==='RACE')?0:cpuBlockersNeeded(ctx);  // RACE=壁も全部攻撃に回す
+  // 徳田さん：シールドのST(6/8)が実質的な追加防御になるため、計算上の必要数より
+  // 1体少なく温存し、1や3も攻撃に回す（「1でも隙があればどんどん殴る」）。
+  if(cpuIsTokuda(p)&&stance!=='DEFEND')reserveCount=Math.max(0,reserveCount-1);
   const cantAttackBlk=myUntappedBlk.filter(c=>!canAttack(p,c));
   const remainingReserve=Math.max(0,reserveCount-cantAttackBlk.length);
   const attackableBlk=myUntappedBlk.filter(c=>canAttack(p,c))
@@ -5237,7 +5294,7 @@ function cpuChooseAttack(p,minScore=0.01){
    *  「盤面の総ブレイクで割り切りが射程内」になってから波状攻撃で一気に行く。 */
   const myBreakNext=ctx.me.field.filter(c=>!c.linkedWith||c.linkRoot)
                        .reduce((s,c)=>s+cpuBreakerCount(c),0);
-  const committed=(stance==='ATTACK')||(stance==='RACE')||myBreakNext>=ctx.oppShields-1
+  const committed=cpuIsTokuda(p)||(stance==='ATTACK')||(stance==='RACE')||myBreakNext>=ctx.oppShields-1
                  ||attackers.filter(c=>!isBlk(c)).length>=3;  // 波が組めるなら膠着せず攻める
 
   /* ── オーバーラン（物量押し）：攻勢時、攻撃役がブロッカー数を上回るなら押し切る ──
@@ -5269,9 +5326,18 @@ function cpuChooseAttack(p,minScore=0.01){
   else targets.push({type:'direct'});
   oppTapped.forEach(c=>targets.push({type:'creature',card:c}));
   let best=null;
+  const TOKUDA=cpuIsTokuda(p);
   for(const atk of attackers)for(const t of targets){
     if(t.type==='shield' && !committed && cpuBreakerCount(atk)<2)continue; // 安売り禁止
-    const score=cpuScoreAttack(p,atk,t,ctx);
+    // 徳田さん：フィールド破壊に攻撃回数を使わない。例外は将来の壁になるブロッカー、
+    // ヒラボン持ちの2、ダブルブレイカー以上の大型だけ（それ以外はシールドへ）。
+    if(TOKUDA && t.type==='creature'){
+      const tc=t.card;
+      const worth=(tc.num===1||tc.num===3||tc.num===2||cpuBreakerCount(tc)>=2);
+      if(!worth)continue;
+    }
+    let score=cpuScoreAttack(p,atk,t,ctx);
+    if(TOKUDA && t.type==='shield' && score>-Infinity)score+=2.5;  // シールド優先バイアス
     if(score===-Infinity)continue;
     if(!best||score>best.score||(score===best.score&&getAtkPower(atk)<getAtkPower(best.attacker)))
       best={attacker:atk,target:t,score};
