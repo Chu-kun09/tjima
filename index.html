@@ -4256,6 +4256,7 @@ function cpuEvalBoard(p){
 function cpuRemovalValue(card){
   let v=getAtkPower(card);
   if(card.num===1||card.num===3)v+=2;
+  if(card.num===2)v+=4;   // 場の2＝毎ターン使えるアタック時ヒラボンの脅威。パワー以上の価値
   if(card.linkedWith)v+=2;
   return v;
 }
@@ -5229,11 +5230,14 @@ function cpuScoreAttack(p,atk,target,ctx){
       const tradeScore = shieldVal - (maxBlk>aPow ? aPow*CPU_W.body : 0); // 相討ちは本体損なし
       return Math.max(0.1, tradeScore); // 最低でも微正値にして攻撃する意思を保つ
     }
-    return (maxBlk>aPow)?-aPow*CPU_W.body:-0.5;
+    // ブロックされて一方的に討たれる攻撃は「カードの価値」分の丸損。
+    // パワーだけで測ると2(ヒラボンエンジン)などの無駄死にを軽く見てしまうため、
+    // 除去価値ベースで重く評価する（畳み掛け＝突破できる場合はオーバーラン処理が担当）。
+    return (maxBlk>aPow)?-(Math.max(aPow*CPU_W.body, cpuRemovalValue(atk)*0.5)+0.3):-0.5;
   }
   if(target.type==='direct'){
     if(maxBlk===0)return preservePenalty>0?Math.max(0.1,Infinity):Infinity; // 勝てるなら温存無視
-    if(maxBlk>=aPow)return -aPow*CPU_W.body;
+    if(maxBlk>=aPow)return -(Math.max(aPow*CPU_W.body, cpuRemovalValue(atk)*0.5)+0.3);
     return cpuRemovalValue(ctx.oppUntappedBlockers.reduce((a,b)=>getAtkPower(a)>=getAtkPower(b)?a:b))*CPU_W.removal-preservePenalty;
   }
   return -Infinity;
@@ -5337,7 +5341,9 @@ function cpuChooseAttack(p,minScore=0.01){
       if(!worth)continue;
     }
     let score=cpuScoreAttack(p,atk,t,ctx);
-    if(TOKUDA && t.type==='shield' && score>-Infinity)score+=2.5;  // シールド優先バイアス
+    // シールド優先バイアスは「成立している攻撃(score>0)」の中での優先順位付けにだけ使う。
+    // 負の攻撃（ブロックされて一方的に死ぬ等）を正に反転させてはいけない＝無駄死に防止。
+    if(TOKUDA && t.type==='shield' && score>0)score+=2.5;
     if(score===-Infinity)continue;
     if(!best||score>best.score||(score===best.score&&getAtkPower(atk)<getAtkPower(best.attacker)))
       best={attacker:atk,target:t,score};
