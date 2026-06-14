@@ -4613,6 +4613,18 @@ function cpuScoreCard(p,card,ctx){
           // 限界リスク = (0宣言の取り分 − 代替宣言の取り分 − 相手のコスト) × 脅威
           const marginal=Math.max(0, zeroLossAfter-altBest-discardCost);
           score-=threat*marginal;
+          // ── 攻撃価値の取り消し（重要）──────────────────────────────────
+          // 召喚した0は召喚酔いで“このターン殴れない”。相手のヒラボンが高確率(threat)で
+          // 次の自分のターンが来る前に宣言0で消すなら、冒頭で加点した「攻撃前提の価値
+          // (パワー＋トリプルブレイク＋アグロ)」はほぼ幻。手札の0は2の影響を受けず温存が
+          // 安全なので、撃たれる見込みのぶんだけ攻撃価値を取り消す。これが無いと、相手の
+          // 場に2がいても0の攻撃価値(約+18)に押し切られて毎回出してしまう（報告の不具合）。
+          const bc=cpuBreakerCount(card);
+          // 終盤の畳み掛け（相手シールド≤2）では、多少消されるリスクを負っても押し切る価値が
+          // あるので攻撃価値の取り消しを大きく緩める。
+          const offenseKeep=(ctx.oppShields<=2)?0.25:1.0;
+          const wastedOffense=getAtkPower(card)*CPU_W.body + bc*CPU_W.breaker*breakDelay + bc*ctx.aggro*CPU_W.aggro + CPU_W.freeBonus*0.5;
+          score-=threat*wastedOffense*offenseKeep;
           // スタック抑制（ソフト）：0を重ねるほど1宣言の的が太る。畳み掛け（相手シールド≤2）では緩和。
           if(zerosOnField>=1){
             const push=ctx.oppShields<=2?0.4:1.0;
@@ -4666,8 +4678,17 @@ function cpuScoreCard(p,card,ctx){
       const oppHas2OnField=ctx.en.field.some(c=>c.num===2&&(!c.linkedWith||c.linkRoot));
       let kill2Bonus=0;
       if(oppHas2OnField){
+        // 相手2の除去価値（脅威除去プレミアム）。ただし「攻めて勝つ」線がある局面では
+        // 過大評価しない：自分に攻撃役が揃い、ブロッカーさえ消せば打点が通るなら、
+        // 守りの2除去より攻めの突破を優先すべき（＝ユーザー指摘の場面）。
         const disadvantage=Math.max(0, 3-ctx.dangerLevel); // dangerLevelが低いほど大
-        kill2Bonus = CPU_W.removal*4 + disadvantage*3;
+        // 攻勢局面では脅威除去プレミアムを縮小する。
+        //  ・自分に「ブロッカーを消せば通る」攻撃役が複数いる
+        //  ・かつ盤面が劣勢でない（dangerLevel≥2）＝守りに2除去を回す必要が薄い
+        const myAtkN=ctx.me.field.filter(c=>canAttack(p,c)).length;
+        const offensivePosture = myAtkN>=2 && ctx.dangerLevel>=2;
+        const killPremium = offensivePosture ? CPU_W.removal*1.2 : CPU_W.removal*4;
+        kill2Bonus = killPremium + (offensivePosture?disadvantage*1:disadvantage*3);
         // 2を宣言したときの実利益を見積もる（相手2破壊 − 自分2巻き添え）。
         const oppLoss2=ctx.en.field.filter(c=>c.num===2).reduce((s,c)=>s+cpuRemovalValue(c),0)
                       +ctx.en.mana.filter(c=>c.num===2).reduce((s,c)=>s+cpuRemovalValue(c)*CPU_W.manaHit,0);
@@ -4675,7 +4696,8 @@ function cpuScoreCard(p,card,ctx){
                       +ctx.me.mana.filter(c=>c.num===2).reduce((s,c)=>s+cpuRemovalValue(c)*CPU_W.manaHit,0)+2;
         const gain2=(oppLoss2-myLoss2)+kill2Bonus; // 2宣言の総合利益（脅威除去ボーナス込み）
         // best(b)が2でないなら、その利益(b.gain)と2宣言の利益(gain2)を比べて高い方を宣言。
-        // これにより「相手に0がいるのに2を破壊して0を残す」誤りを防ぐ。
+        // b.gain には「ブロッカーを消して攻撃を通す突破価値」が既に織り込まれているので、
+        // 攻めの線(b)が勝てば自然とそちらを宣言する（相手の2は次ターン以降に対処）。
         if(b.num!==2 && gain2>b.gain){
           plan.declareNum=2;
         }
@@ -4814,6 +4836,14 @@ function cpuScoreCard(p,card,ctx){
       score+=ctx.aggro*3.0;
       score+=atkBonus*1.2;  // 有利時はフィニッシャーを積極的に
       if(inDanger)score-=defBonus*0.4; // 危機時は大型より防御を優先（ただし完全には消さない）
+      // 9はマナチャージ時2マナ扱い＝本質的に「チャージ要員」。5+6/7があれば全カードを
+      // 召喚できるので、9をわざわざ場に出すのは終盤のフィニッシュ時くらい。
+      // フィニッシュ局面（相手シールドが残り少ない）以外では召喚価値を大きく下げ、
+      // 「9を抱えてマナを盛り、9を召喚する」無駄な動きを抑制する（チャージに回させる）。
+      // ※ dangerLevel は「自分の」残シールド予測なので finisher 判定には使わない
+      //   （盤面が空の序盤は dangerLevel=最大になり誤って finisher 扱いになるため）。
+      const isFinisher = ctx.oppShields<=2;
+      if(!isFinisher) score-=8;
       break;
     }
   }
@@ -5073,6 +5103,10 @@ function cpuChooseManaCharge(p,opts={}){
       }
     }
     if(!lowest) return null;
+    // 6マナ以上あれば（5の0召喚・アタック時ヒラボンの4捨て等の手段込みで）ほぼ全カードを
+    // 出せる。これ以上の「埋め草チャージ」はカード資源を遊ばせるだけなので止める。
+    // ＝6マナ以上で召喚価値が増えないチャージはしない（手札を温存）。
+    if(cur>=6) return null;
     // 序盤(マナ≤4)は加速のため置く。ただし重複で危険な札しかないなら置かない判断もする。
     if(cur<=4 || lowest.baseKeep<=3){
       // 重複ペナルティ込みでも置く価値があるか（effKeepが極端に高い=危険なら見送り）
@@ -5084,6 +5118,11 @@ function cpuChooseManaCharge(p,opts={}){
 
   const th=(opts.skipThreshold!==undefined)?opts.skipThreshold:0;
   if(!best.card || best.chargeScore<th && totalMana(p)>4)return null;
+  // 7マナ以上あれば基本的に全カードを召喚できる。これ以上のチャージは、
+  // 「今ターンその1枚で“価値ある”追加召喚が成立する」ときだけ許可する。
+  // 単に大型(特に9)を出すためだけのチャージは抑制：9召喚は case 9 で減点済みなので、
+  // projected の伸びが小さい（＝9を出す程度の価値しかない）チャージはここで弾く。
+  if(totalMana(p)>=7 && best.projected<=noChargeProjected+5) return null;
   // ── アタック時ヒラボンの布石 ───────────────────────────────────────────
   // 今ターン、場の2でアタック時ヒラボンを撃つ価値があるなら捨て札を1枚確保したい。
   // 特に4はチャージしても、ヒラボンの捨て札にしても結局マナへ行く（同じマナ加速）。
@@ -5331,8 +5370,12 @@ function cpuChooseAttack(p,minScore=0.01){
   oppTapped.forEach(c=>targets.push({type:'creature',card:c}));
   let best=null;
   const TOKUDA=cpuIsTokuda(p);
+  const maxBlkP=cpuMaxBlockerPower(ctx);
   for(const atk of attackers)for(const t of targets){
-    if(t.type==='shield' && !committed && cpuBreakerCount(atk)<2)continue; // 安売り禁止
+    // シングルブレイカーのシールド攻撃：相手の未タップブロッカーに勝てない（割り込まれて
+    // 一方的に討たれる）ときだけ見送る。割り込まれない＝安全なら、防御不要の序盤でも
+    // 未防備のシールドはどんどん殴る（正しいテンポ。膠着して黙り込むのを防ぐ）。
+    if(t.type==='shield' && cpuBreakerCount(atk)<2 && maxBlkP>=getAtkPower(atk))continue;
     // 徳田さん：フィールド破壊に攻撃回数を使わない。例外は将来の壁になるブロッカー、
     // ヒラボン持ちの2、ダブルブレイカー以上の大型だけ（それ以外はシールドへ）。
     if(TOKUDA && t.type==='creature'){
