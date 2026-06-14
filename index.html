@@ -5317,16 +5317,27 @@ function cpuChooseAttack(p,minScore=0.01){
   const attackers=all.filter(c=>!(isBlk(c)&&reservedIds.has(c.id)));
   if(!attackers.length)return null;
 
-  /* ── DEFEND：シールドは殴らない（攻めても守れない）。
-   *  非ブロッカーの余剰戦力で、タップ済みの相手脅威を有利交換で討ち取る掃除だけ行い、
-   *  ブロッカーは全員アンタップのまま壁として残して即エンドする。 */
+  /* ── DEFEND：ブロッカー(1・3)は全員アンタップの壁として温存する。
+   *  ただし「壁にならない非ブロッカー戦力」は遊ばせない＝攻めが結果的に守りになる：
+   *   ・0(トリプルブレイカー/パワー11以上)や、相手ブロッカーに勝てる札でシールドを殴る。
+   *     相手は「ブロッカーを一方的に討ち取られる」か「シールドを割られる」かの二択を迫られ、
+   *     さらにブロッカーを防御に拘束されて攻めに使えなくなる。これらの札は元々ブロック
+   *     できない（=攻撃しても自分の守りは1ミリも減らない）ので、出さない理由がない。
+   *   ・タップ済みの相手脅威は有利交換で掃除する。
+   *  攻撃に出すのは「相手ブロッカーに割り込まれて一方的に討たれない安全な攻撃」だけ
+   *  （cpuScoreAttackが maxBlk<aPow のとき正、割り込まれて死ぬなら負を返すので s>0 で判定）。 */
   if(stance==='DEFEND'){
+    const defTargets=[];
+    if(ctx.oppShields>0)defTargets.push({type:'shield'});
+    else defTargets.push({type:'direct'});
+    oppTapped.forEach(c=>defTargets.push({type:'creature',card:c}));
     let best=null;
     for(const atk of attackers){
-      if(isBlk(atk))continue;
-      for(const t of oppTapped){
-        const s=cpuScoreAttack(p,atk,{type:'creature',card:t},ctx);
-        if(s>0&&(!best||s>best.score))best={attacker:atk,target:{type:'creature',card:t},score:s};
+      if(isBlk(atk))continue;                 // 壁(1・3)は出さない
+      for(const t of defTargets){
+        const s=cpuScoreAttack(p,atk,t,ctx);
+        if(s>0&&(!best||s>best.score||(s===best.score&&getAtkPower(atk)<getAtkPower(best.attacker))))
+          best={attacker:atk,target:t,score:s};
       }
     }
     return best;
