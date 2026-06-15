@@ -5188,11 +5188,76 @@ function cpuBlockersNeeded(ctx){
   return breaks.length;
 }
 
+/* 仮に相手クリーチャー(removedIds)を除去し、自分のブロッカーが myBlk 体になったと仮定して
+ * 次の相手ターンの dangerLevel（受けた後に残るシールド枚数）を再計算する。
+ * 「今この除去をすれば生き残れるか？」の判定に使う。 */
+function cpuDangerWith(ctx, removedIds, myBlk){
+  const remain=ctx.enUnits.filter(c=>!removedIds.has(c.id));
+  const oppAtk=remain.slice().sort((a,b)=>cpuBreakerCount(b)-cpuBreakerCount(a)); // 大ブレイク順
+  let left=Math.max(0,Math.floor(myBlk)), dmg=0;
+  for(const a of oppAtk){ if(left>0)left--; else dmg+=cpuBreakerCount(a); }
+  return ctx.myShields-dmg;
+}
+/* ── 除去による生存プラン ───────────────────────────────────────────────
+ * dangerLevel<0（このままでは次ターン敗北）でも、今ターンに相手の攻め手を除去すれば
+ * 生き残れる場合がある。「亀になっても負け」と決めつけてRACE（捨て身）に走る前に、
+ * 次の2手段で“次ターンに通る相手打点”を防げる水準まで減らせるかを判定する。
+ *   A) 戦闘除去（手札コスト0／優先）：相手に未タップブロッカーが無いとき、タップ済みの
+ *      相手脅威を勝てるアタッカー（例：0=パワー11以上）で討ち取る。0は元々ブロックに
+ *      使えないので、これで脅威を消せば守りにそのまま直結する。
+ *   B) アタック時ヒラボン(2)：番号宣言で相手クリーチャーを一掃。手札1枚を消費するが、
+ *      命と引き換えなら安い。自軍の同番号巻き添えで守りが減る分も考慮して判定する。
+ * 戻り値: {method:'combat',targetIds:[...]} / {method:'hirabon',declareNum:n} / null */
+function cpuSurvivalRemovalPlan(p,ctx){
+  if(ctx.dangerLevel>=0)return null;            // そもそも敗北圏ではない
+  const baseBlk=Math.floor(ctx.myBlockerCount);
+
+  // ── A) 戦闘でタップ済みの脅威を討ち取る（手札を切らない＝最優先）──
+  if(ctx.oppUntappedBlockers.length===0){       // 討ち取りを邪魔する相手ブロッカーが無い
+    const threats=ctx.enUnits.filter(c=>c.tapped)
+                    .sort((a,b)=>cpuBreakerCount(b)-cpuBreakerCount(a)); // 脅威の大きい順に消す
+    const pool=ctx.me.field.filter(c=>canAttack(p,c)).slice();
+    const removed=new Set(); const usedIds=new Set(); let blkUsed=0;
+    for(const t of threats){
+      // この脅威に勝てる未使用アタッカーを、過剰殺傷を避け最小パワーで割り当てる
+      const atk=pool.filter(a=>!usedIds.has(a.id)&&getAtkPower(a)>=getAtkPower(t))
+                    .sort((a,b)=>getAtkPower(a)-getAtkPower(b))[0];
+      if(!atk)continue;
+      usedIds.add(atk.id); removed.add(t.id);
+      if((atk.num===1||atk.num===3)&&(!atk.linkedWith||atk.linkRoot))blkUsed++; // 壁を攻撃に使うと守りが減る
+      if(cpuDangerWith(ctx, removed, baseBlk-blkUsed)>=0)
+        return {method:'combat', targetIds:[...removed]};
+    }
+  }
+
+  // ── B) アタック時ヒラボン(2)で番号一掃 ──
+  const my2=ctx.me.field.find(c=>c.num===2&&canAttack(p,c)&&(!c.linkedWith||c.linkRoot));
+  const canDiscard=ctx.me.hand.some(c=>c.num!==0); // 0以外を1枚捨てられる（0は捨てない）
+  if(my2 && canDiscard){
+    const oppNums=[...new Set(ctx.enUnits.map(c=>c.num))].filter(n=>n!==2); // 攻撃役の2は巻き込まない
+    // 倒せる脅威が大きい番号から試す
+    oppNums.sort((a,b)=>{
+      const da=ctx.enUnits.filter(c=>c.num===a).reduce((s,c)=>s+cpuBreakerCount(c),0);
+      const db=ctx.enUnits.filter(c=>c.num===b).reduce((s,c)=>s+cpuBreakerCount(c),0);
+      return db-da;
+    });
+    for(const n of oppNums){
+      const removed=new Set(ctx.enUnits.filter(c=>c.num===n).map(c=>c.id));
+      const lostBlk=(n===1||n===3)
+        ? ctx.me.field.filter(c=>c.num===n&&!c.tapped&&(!c.linkedWith||c.linkRoot)).length : 0;
+      if(cpuDangerWith(ctx, removed, baseBlk-lostBlk)>=0)
+        return {method:'hirabon', declareNum:n};
+    }
+  }
+  return null;
+}
+
 /* ── スタンス判定：このターンの行動方針を1つに決める（攻守メリハリの軸）──────
- *  FINISH: このターンに勝ち切れる        → 全軍突撃（温存・ST恐れ一切なし）
- *  DEFEND: 次ターン敗北圏（dangerLevel≤1）→ ブロッカーは全員壁。攻撃は安全な掃除のみ
- *  ATTACK: 詰めが近く安全も確保          → 余剰戦力で全力プッシュ
- *  BUILD : それ以外                      → 盤面構築。シールドは安売りしない */
+ *  FINISH : このターンに勝ち切れる        → 全軍突撃（温存・ST恐れ一切なし）
+ *  SURVIVE: 敗北圏だが除去で生き残れる    → 相手の攻め手を最優先で除去（命＞テンポ）
+ *  DEFEND : 次ターン敗北圏（dangerLevel≤1）→ ブロッカーは全員壁。攻撃は安全な掃除のみ
+ *  ATTACK : 詰めが近く安全も確保          → 余剰戦力で全力プッシュ
+ *  BUILD  : それ以外                      → 盤面構築。シールドは安売りしない */
 function cpuStance(p,ctx){
   if(cpuLethalPlanThisTurn(p,ctx))return 'FINISH';
   // ── 徳田さんモード：シールドのST(6/8)で受けが強い前提の超攻撃型 ──────────
@@ -5200,15 +5265,23 @@ function cpuStance(p,ctx){
   // 本当に詰みかけ（dangerLevel≤0）以外は常に攻め続けてシールドを割りにいく。
   if(cpuIsTokuda(p)){
     if(ctx.dangerLevel<=0){
-      if(ctx.dangerLevel<0 && ctx.me.field.some(c=>canAttack(p,c)))return 'RACE';
+      if(ctx.dangerLevel<0){
+        if(cpuSurvivalRemovalPlan(p,ctx))return 'SURVIVE';  // 除去で延命できるなら最優先
+        if(ctx.me.field.some(c=>canAttack(p,c)))return 'RACE';
+      }
       return 'DEFEND';
     }
     return 'ATTACK';
   }
   if(ctx.dangerLevel<=1){
     // 全ブロッカーを壁にしても次ターン割り切られる（dangerLevel<0）なら、
-    // 亀になっても負けるだけ → 捨て身で殴り、ST捲りや相手のミスに賭ける。
-    if(ctx.dangerLevel<0 && ctx.me.field.some(c=>canAttack(p,c)))return 'RACE';
+    // ① まず相手の攻め手を“除去できないか”を確認する（ヒラボン/0での討ち取り等で
+    //    脅威を消せば、亀にならずとも生き残れることがある＝SURVIVE）。
+    // ② 除去でも守れないなら、捨て身で殴ってST捲りや相手のミスに賭ける（RACE）。
+    if(ctx.dangerLevel<0){
+      if(cpuSurvivalRemovalPlan(p,ctx))return 'SURVIVE';
+      if(ctx.me.field.some(c=>canAttack(p,c)))return 'RACE';
+    }
     return 'DEFEND';
   }
   const myBreakNext=ctx.me.field.filter(c=>!c.linkedWith||c.linkRoot)
@@ -5285,7 +5358,7 @@ function cpuChooseAttack(p,minScore=0.01){
   const ctx=cpuEvalBoard(p);
   const all=ctx.me.field.filter(c=>canAttack(p,c));
   if(!all.length)return null;
-  const stance=cpuStance(p,ctx);
+  let stance=cpuStance(p,ctx);
   const isBlk=c=>(c.num===1||c.num===3)&&(!c.linkedWith||c.linkRoot);
   const oppTapped=ctx.en.field.filter(c=>c.tapped&&(!c.linkedWith||c.linkRoot));
 
@@ -5305,7 +5378,7 @@ function cpuChooseAttack(p,minScore=0.01){
    *  攻撃に出るのは弱い余剰ブロッカーのみ。 */
   const myUntappedBlk=ctx.me.field.filter(c=>isBlk(c)&&!c.tapped);
   let reserveCount=(stance==='DEFEND')?myUntappedBlk.length:
-                   (stance==='RACE')?0:cpuBlockersNeeded(ctx);  // RACE=壁も全部攻撃に回す
+                   (stance==='RACE'||stance==='SURVIVE')?0:cpuBlockersNeeded(ctx);  // RACE/SURVIVE=壁も攻撃に回す
   // 徳田さん：シールドのST(6/8)が実質的な追加防御になるため、計算上の必要数より
   // 1体少なく温存し、1や3も攻撃に回す（「1でも隙があればどんどん殴る」）。
   if(cpuIsTokuda(p)&&stance!=='DEFEND')reserveCount=Math.max(0,reserveCount-1);
@@ -5316,6 +5389,27 @@ function cpuChooseAttack(p,minScore=0.01){
   const reservedIds=new Set(attackableBlk.slice(0,remainingReserve).map(c=>c.id));
   const attackers=all.filter(c=>!(isBlk(c)&&reservedIds.has(c.id)));
   if(!attackers.length)return null;
+
+  /* ── SURVIVE：敗北圏でも除去で生き残れる場面。相手の攻め手を最優先で討ち取る。──
+   *  例) 自シールド0・ブロッカー無し、相手はタップ済みの3が1体だけ
+   *      → このままなら次ターンその3に殴られて負け。だが今ターン0(パワー14)で3を
+   *        討ち取れば相手の攻め手が消え、生き残れる。シールドを殴り続ける(RACE)より
+   *        “脅威の除去”を優先する。ヒラボン除去はcpuAttackStep側で先に処理される。 */
+  if(stance==='SURVIVE'){
+    const sv=cpuSurvivalRemovalPlan(p,ctx);
+    if(sv && sv.method==='combat'){
+      for(const id of sv.targetIds){
+        const t=ctx.enUnits.find(c=>c.id===id&&c.tapped);
+        if(!t)continue;
+        // 過剰殺傷を避け、勝てる最小パワーのアタッカーで討つ（大型は温存して次の脅威/打点へ）
+        const atk=attackers.filter(a=>getAtkPower(a)>=getAtkPower(t))
+                           .sort((a,b)=>getAtkPower(a)-getAtkPower(b))[0];
+        if(atk)return {attacker:atk,target:{type:'creature',card:t},score:Infinity};
+      }
+    }
+    // 戦闘除去が使えない（＝ヒラボンで対応 or 既に除去済み）なら捨て身レースに切替える。
+    stance='RACE';
+  }
 
   /* ── DEFEND：ブロッカー(1・3)は全員アンタップの壁として温存する。
    *  ただし「壁にならない非ブロッカー戦力」は遊ばせない＝攻めが結果的に守りになる：
@@ -5644,15 +5738,20 @@ function cpuExecSummon(p,pick){
 //     （cpuHirabonBestが両方を内包して算出。相手0が複数なら除去価値が大きい＝高評価）
 //   ・捨て札コスト＝手放すカードのkeep値。手札が薄い(2枚以下)ほど痛手として加点。
 //   ・例外：4を捨てるとsendToGraveでマナへ行く＝チャージ相当＋効果なので捨て得。
-function cpuHirabonAttackPlan(p, ctx){
+function cpuHirabonAttackPlan(p, ctx, forceNum){
   const me=G.players[p];
   // 攻撃できる場の2（リンクのサブカードは個別攻撃不可なので除外）
   const attacker=me.field.find(c=>c.num===2 && canAttack(p,c) && (!c.linkedWith||c.linkRoot));
   if(!attacker) return null;
   if(!me.hand.length) return null;          // 捨てる手札が無ければ発動不可
   const b=cpuHirabonBest(ctx);
-  if(b.gain<=0) return null;                // 宣言しても盤面利益が無い＝手札だけ損
-  if(b.num===2) return null;                // 自分の攻撃役2を巻き込む宣言はしない
+  // 生存のための強制宣言（forceNum指定時）：盤面利益や手札コストを無視して必ず撃つ。
+  const survival=(forceNum!=null);
+  const declareNum=survival?forceNum:b.num;
+  if(!survival){
+    if(b.gain<=0) return null;                // 宣言しても盤面利益が無い＝手札だけ損
+    if(b.num===2) return null;                // 自分の攻撃役2を巻き込む宣言はしない
+  }
 
   // 捨て札の選定：最も手放してよい1枚。0は絶対に捨てない。4はマナ送りなので捨て得。
   let bestDiscard=null;
@@ -5663,6 +5762,11 @@ function cpuHirabonAttackPlan(p, ctx){
     if(!bestDiscard || cost<bestDiscard.cost) bestDiscard={card:c,cost};
   }
   if(!bestDiscard) return null;             // 手札が0しかない等
+
+  // 生存のための強制宣言：閾値判定をスキップし、必ず撃てる計画として返す。
+  if(survival){
+    return {attacker, declareNum, gain:b.gain, discardCard:bestDiscard.card, discardCost:bestDiscard.cost, marginal:999, survival:true};
+  }
 
   // 手札が薄いほど1枚失う痛みは大きい（特に2枚以下）。
   const handAfter=me.hand.length-1;
@@ -5677,14 +5781,14 @@ function cpuHirabonAttackPlan(p, ctx){
   //      （あふれた攻撃が通る＝シールドを割り続けてダイレクトに繋がる）。
   //  これらでは手札コストをほぼ撤廃して、ヒラボンを使えるようにする。
   const inDanger = ctx.dangerLevel<=1;
-  const oppBlkAfter = ctx.oppUntappedBlockers.filter(x=>x.num!==b.num).length;     // 宣言後に残る相手ブロッカー
+  const oppBlkAfter = ctx.oppUntappedBlockers.filter(x=>x.num!==declareNum).length; // 宣言後に残る相手ブロッカー
   const myAtkCount  = me.field.filter(c=>canAttack(p,c)&&(!c.linkedWith||c.linkRoot)).length;
   const clearsBlocker = oppBlkAfter < ctx.oppUntappedBlockers.length;             // 宣言で実際にブロッカーが減る
   const enablesBreakthrough = clearsBlocker && myAtkCount>oppBlkAfter && myAtkCount>0; // 攻撃役があふれて通る
   let handPenalty = (inDanger||enablesBreakthrough) ? Math.min(basePenalty,1) : basePenalty;
 
   const marginal=b.gain - bestDiscard.cost - handPenalty;
-  return {attacker, declareNum:b.num, gain:b.gain, discardCard:bestDiscard.card, discardCost:bestDiscard.cost, marginal};
+  return {attacker, declareNum, gain:b.gain, discardCard:bestDiscard.card, discardCost:bestDiscard.cost, marginal};
 }
 // ヒラボン後、指定の攻撃役で1回だけ攻撃する（ブロック確認は通常通り防御側に出す）
 function cpuExecSingleAttack(p, atk){
@@ -5757,12 +5861,26 @@ function cpuAttackStep(p){
     CPU._stanceToasted=true;
     const st=cpuStance(p,cpuEvalBoard(p));
     if(st==='FINISH')toast('CPU: 🔥 総攻撃！');
+    else if(st==='SURVIVE')toast('CPU: 🧹 脅威を排除して立て直す');
     else if(st==='DEFEND')toast('CPU: 🛡 守りを固める');
     else if(st==='RACE')toast('CPU: ⚡ 捨て身の猛攻！');
   }
   if(!CPU._hirabonAttackDone){
     const hctx=cpuEvalBoard(p);
     if(!cpuHasLethal(p,hctx)){
+      // ① 生存のためのヒラボン：番号を固定し、手札コストや通常の閾値を無視して必ず撃つ
+      //    （戦闘除去で代替できるならそちらが優先されるので、ここはヒラボンでしか守れない場合）。
+      const sv=cpuSurvivalRemovalPlan(p,hctx);
+      if(sv && sv.method==='hirabon'){
+        const hp=cpuHirabonAttackPlan(p,hctx,sv.declareNum);
+        if(hp){
+          CPU._hirabonAttackDone=true;
+          CPU._busy=true;
+          cpuExecHirabonAttack(p,hp);
+          return;
+        }
+      }
+      // ② 通常のヒラボン：盤面利益が捨て札コストを十分上回るとき発動
       const hp=cpuHirabonAttackPlan(p,hctx);
       if(hp && hp.marginal>2){
         CPU._hirabonAttackDone=true;
