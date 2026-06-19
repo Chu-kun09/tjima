@@ -1408,6 +1408,7 @@ function breakLinkedPair(owner,card){
       // partnerをフィールドに残す（タップ状態で）
       partner.tapped=true;
       G.players[owner].field.push(partner);
+      applyLink34Aura(owner);
       renderAll();
     }},
     {label:`${CJ[partner.color]}${partner.num}を墓地へ`,cls:'r',fn:()=>{
@@ -1415,6 +1416,7 @@ function breakLinkedPair(owner,card){
       sendToGrave(owner,partner);
       card.tapped=true;
       G.players[owner].field.push(card);
+      applyLink34Aura(owner);
       renderAll();
     }},
   ],`P${owner}はどちらを墓地に送りますか？`);
@@ -1503,9 +1505,8 @@ function completeSummon(p,card){
   }
   pl.hand=pl.hand.filter(c=>c.id!==card.id);
   card.tapped=false;card.summonedThisTurn=true;
-  const hasLink34=pl.field.some(c=>c.linkedWith&&((c.num===3&&c.linkedWith.num===4)||(c.num===4&&c.linkedWith.num===3)));
-  if(hasLink34)card.speedAttacker=true;
   pl.field.push(card);
+  applyLink34Aura(p);
   const summonLabel=card.num===0?'0召喚！':CJ[card.color]+card.num;
   fxSummon(p,card);
   pushState({type:'summon', label:summonLabel, color:COL_HEX[card.color], isZero:card.num===0});
@@ -1790,7 +1791,7 @@ function restoreCard(card,op,zone){
   if(zone==='hand')G.players[op].hand.push(card);
   else if(zone==='mana')G.players[op].mana.push(card);
   else if(zone==='grave')sendToGrave(op,card);
-  else if(zone==='field'){card.tapped=false;G.players[op].field.push(card);}
+  else if(zone==='field'){card.tapped=false;G.players[op].field.push(card);applyLink34Aura(op);}
   else if(zone==='shield'){
     // 空きシールドスロットに戻す
     const idx=G.players[op].shields.indexOf(null);
@@ -1814,7 +1815,7 @@ function exec7Move(p,card,origOwner,dest,to){
   card.tapped=false;
   if(dest==='hand'){card._faceDown=false;G.players[to].hand.push(card);}
   else if(dest==='mana'){card._faceDown=false;G.players[to].mana.push(card);}
-  else if(dest==='field'){card._faceDown=false;card.summonedThisTurn=true;G.players[to].field.push(card);}
+  else if(dest==='field'){card._faceDown=false;card.summonedThisTurn=true;G.players[to].field.push(card);applyLink34Aura(to);}
   else if(dest==='shield'){
     // 次に破壊される位置（先頭）にカードを追加する
     // 既存の生きているシールドの手前に差し込み、枚数を+1する
@@ -1931,6 +1932,19 @@ function doLink(a,b,p){
   if(ONLINE.enabled) pushState({type:'link', label:linkLabel});
   renderAll();
   setTimeout(()=>{if(G.phase==='summon')phaseSummon();},400);
+}
+
+// ── 3,4リンクの「場全体ST化」を常に保証するヘルパー ─────────────────────────
+// 3,4リンクが成立している間、その持ち主の場に出ている/出てくる全カードは
+// スピードアタッカー(ST)になる。speedAttackerフラグはこの効果以外で立つことが
+// 無いため、「リンクが場にあるか」と「場の全カードのSTフラグ」を常に一致させれば
+// 安全（リンクが無ければ何もしない＝既存のSTを誤って消さない）。
+// 通常召喚(completeSummon)以外の経路で場にカードが出る場合（7の効果での移動、
+// シールドトリガー、リンク解除時に残るカードなど）は個別にSTを立てる処理が
+// 漏れやすいため、カードが場に出入りするたびにこれを呼んで同期する。
+function applyLink34Aura(p){
+  const hasLink34=G.players[p].field.some(c=>c.linkedWith&&((c.num===3&&c.linkedWith.num===4)||(c.num===4&&c.linkedWith.num===3)));
+  if(hasLink34)G.players[p].field.forEach(c=>c.speedAttacker=true);
 }
 
 // ─ シールドブレイク ─
@@ -2213,6 +2227,7 @@ function handleOnlinePhase(phase, myP){
             G.players[cardOwner].field=G.players[cardOwner].field.filter(c=>c.id!==cardA.id);
             cardA.tapped=false;
             G.players[cardOwner].hand.push(cardA);
+            applyLink34Aura(cardOwner);
             G.onlinePhase='attack-continue'; G._pendingAtk=null; G._6linkedChoice=null;
             toast(`👋 ${CJ[cardA.color]}${cardA.num}を手札へ、${CJ[cardB.color]}${cardB.num}はフィールドに残る`);
             pushState();
@@ -2225,6 +2240,7 @@ function handleOnlinePhase(phase, myP){
             G.players[cardOwner].field=G.players[cardOwner].field.filter(c=>c.id!==cardB.id);
             cardB.tapped=false;
             G.players[cardOwner].hand.push(cardB);
+            applyLink34Aura(cardOwner);
             G.onlinePhase='attack-continue'; G._pendingAtk=null; G._6linkedChoice=null;
             toast(`👋 ${CJ[cardB.color]}${cardB.num}を手札へ、${CJ[cardA.color]}${cardA.num}はフィールドに残る`);
             pushState();
@@ -2485,6 +2501,7 @@ function activateST(st, multiMode){
   }
   st.card.tapped=false;st.card.summonedThisTurn=false;
   pl.field.push(st.card);
+  applyLink34Aura(st.player);
   fxSummon(st.player,st.card);
   toast(`✨ ST発動！ ${CJ[st.card.color]}${st.card.num}が場に`);
   renderAll();
@@ -2564,6 +2581,7 @@ function show6LinkedChoiceModal(p, opp, cardA, cardB){
         G.players[opp].field=G.players[opp].field.filter(c=>c.id!==cardA.id);
         cardA.tapped=false;
         G.players[opp].hand.push(cardA);
+        applyLink34Aura(opp);
         fxEffect(p,'👋 退部！');
         toast(`👋 ${CJ[cardA.color]}${cardA.num}を手札へ、${CJ[cardB.color]}${cardB.num}はフィールドに残る`);
         renderAll();
@@ -2576,6 +2594,7 @@ function show6LinkedChoiceModal(p, opp, cardA, cardB){
         G.players[opp].field=G.players[opp].field.filter(c=>c.id!==cardB.id);
         cardB.tapped=false;
         G.players[opp].hand.push(cardB);
+        applyLink34Aura(opp);
         fxEffect(p,'👋 退部！');
         toast(`👋 ${CJ[cardB.color]}${cardB.num}を手札へ、${CJ[cardA.color]}${cardA.num}はフィールドに残る`);
         renderAll();
@@ -5702,6 +5721,7 @@ function cpuDeclareExTjia(p){
     pl.hand=pl.hand.filter(c=>c.id!==z.id);
     z.tapped=false; z.summonedThisTurn=true; z.linkedWith=null; z.linkRoot=false; z.speedAttacker=false;
     pl.field.push(z);
+    applyLink34Aura(p);
     if(typeof fxSummon==='function')fxSummon(p,z);
     toast(`CPU: ${CJ[z.color]}0 を召喚`);
     renderAll();
@@ -6259,6 +6279,7 @@ breakLinkedPair=function(owner,card){
     const keep=(toGrave===card)?partner:card;
     sendToGrave(owner,toGrave);
     keep.tapped=true; G.players[owner].field.push(keep);
+    applyLink34Aura(owner);
     renderAll(); return;
   }
   _origBreakLinked.apply(this,arguments);
@@ -6273,6 +6294,7 @@ show6LinkedChoiceModal=function(p,opp,cardA,cardB){
     cardB.linkedWith=null;cardB.linkRoot=false;cardB.speedAttacker=false;
     G.players[opp].field=G.players[opp].field.filter(c=>c.id!==toHand.id);
     toHand.tapped=false; G.players[opp].hand.push(toHand);
+    applyLink34Aura(opp);
     fxEffect(p,'👋 退部！'); toast(`CPU: ${CJ[toHand.color]}${toHand.num}を手札へ`);
     renderAll(); after6Bounce(p); return;
   }
