@@ -4388,8 +4388,49 @@ function cpuHirabonBest(ctx){
         // 相手シールドが0枚なら、その攻撃はそのままダイレクトアタック＝勝ち確定。
         // シールドが無い＝シールドトリガー(ST)のリスクも一切無いので、
         // 単なる除去価値（相手0の高い攻撃力など）より圧倒的に優先して必ずこの宣言を選ぶ。
-        if(ctx.oppShields===0) gain += 1000;                   // ダイレクト勝ち確定（最優先）
-        else gain += 5 + survivingAtk*1.5;                     // シールドは残るが押し込める
+        if(ctx.oppShields===0){
+          gain += 1000;                                        // ダイレクト勝ち確定（最優先）
+        }else{
+          // ── 宣言で全ブロッカーを退け、残った攻撃役の合計打点でシールドを割り切る ──
+          // 宣言役（2）自身の攻撃に加え、巻き添えにならない他の生存攻撃役も動員して、
+          // 「合計ブレイク数 ≥ 相手シールド」になるかを見る。2自身の一撃だけで足りる
+          // 場合（シールド1枚など）はそれが最優先のおまけで済むが、シールドが2枚以上
+          // 残っていても、他に十分な攻撃力（突破できる非ブロッカー優先、足りなければ
+          // ブロッカーも動員）が残っていれば、同ターンでシールドを枯らせる。
+          // ただし“ブロッカー(1・3)を動員する”場合だけは要注意：8(片スパ)が出ると
+          // 攻撃に出していない温存中のブロッカーまで含めて場が全タップされてしまうため、
+          // 「ST(8)で最悪全タップされた」と仮定しても、自分のシールドだけで相手の
+          // 次ターン攻撃に耐えられるか（safeEvenIfST）を確認できたときだけ動員する。
+          // 非ブロッカーだけで足りるなら、この安全確認すら不要（温存に何の影響もない）。
+          const hirabonAttacker=myAttackers.find(c=>c.num===2);
+          const selfSurvives=hirabonAttacker && hirabonAttacker.num!==n; // 宣言で自分の2が自爆しない
+          const attackerBreak=selfSurvives?cpuBreakerCount(hirabonAttacker):0;
+
+          const pushPool=myAttackers.filter(c=>c.num!==n&&c!==hirabonAttacker)
+                                     .sort((a,b)=>{
+                                       const ba=(a.num===1||a.num===3)?1:0,bb=(b.num===1||b.num===3)?1:0;
+                                       if(ba!==bb)return ba-bb;             // 非ブロッカーを先に動員
+                                       return cpuBreakerCount(b)-cpuBreakerCount(a);
+                                     });
+          let need=Math.max(0,ctx.oppShields-attackerBreak), acc=0, usesBlocker=false;
+          for(const c of pushPool){
+            if(acc>=need)break;
+            acc+=cpuBreakerCount(c);
+            if(c.num===1||c.num===3)usesBlocker=true;
+          }
+          const fullyClears=(attackerBreak+acc)>=ctx.oppShields;
+
+          // 8(片スパ)で自分の場が最悪全タップされたと仮定しても、相手の次ターン攻撃を
+          // 自分のシールド単独で耐えられるか（=ブロッカーが0体でも大丈夫か）
+          const oppNextThreat=en.field.filter(c=>c.num!==n).reduce((s,c)=>s+cpuBreakerCount(c),0);
+          const safeEvenIfST=ctx.myShields>=oppNextThreat;
+
+          if(fullyClears && (!usesBlocker||safeEvenIfST)){
+            gain += 1000;                                      // 残り打点でシールドを枯らせ、かつ安全圏
+          }else{
+            gain += 5 + survivingAtk*1.5;                       // シールドは残るが押し込める
+          }
+        }
       }else{
         gain += blkByNum[n]*1.5;                               // 一部のブロッカーだけ除去
       }
@@ -5571,6 +5612,27 @@ function cpuChooseBlock(p,atk,blockers,opts={}){
         return {block:true,blocker:winning||cheapest,value:9999};
       }
     }
+
+    /* ── レース優位：受けても今ターン死なず、相手はもうシールド0 ────────────
+     *  ＝こちらは攻め続ければ勝てる位置にいる。0のような大型をブロッカー(1・3)で
+     *  止めても、パワーで必ず負けるので一方的にブロッカーが死ぬだけ（攻撃役は倒せず、
+     *  守れるのはシールド数枚分の価値だけ）。盤面の攻め手（ブロッカーも含め）を1体でも
+     *  多く残すことが勝利に直結する局面では、この“タダ死にチャンプブロック”はせず、
+     *  シールドで受けてブロッカーを温存する。
+     *  ・shieldsAfter（このアタック後の残りシールド）が1以上＝即死しない
+     *  ・残り追撃(followUps)を全部シールドで受けても1以上残る＝このターン安全に耐えられる
+     *  ・相手のシールドが0＝こちらは既にダイレクトを狙えるレース優位
+     *  ・どのブロッカーで受けてもチャンプ（一方的に討ち取れる/相討ちできるブロッカーが無い）
+     *  が全部揃ったときだけ「ブロックしない」を返す。一方的に倒せる/相討ちできるブロッカーが
+     *  1体でもいれば、それは普通に得なので通常ロジックでブロックを選ばせる。 */
+    const oppShieldsNow=G.players[opp].shields.filter(Boolean).length;
+    if(oppShieldsNow===0 && shieldsAfter>=1){
+      const followUps2=G.players[opp].field.filter(c=>c.id!==atk.id&&canAttack(opp,c));
+      const maxFollowBreakers=followUps2.reduce((s,c)=>s+cpuBreakerCount(c),0);
+      const turnSafeWithoutBlock=(shieldsAfter-maxFollowBreakers)>=1;
+      const noWinningBlocker=blockers.every(B=>getAtkPower(B)<aPow); // 一方的キル/相討ちが1体も無い
+      if(turnSafeWithoutBlock && noWinningBlocker) return {block:false};
+    }
   }
 
   let best={block:false,blocker:null,value:isDirect?-Infinity:0};
@@ -5864,6 +5926,52 @@ function cpuExecHirabonAttack(p, hp){
     },650);
   },600);
 }
+/* ── ヒラボン宣言の「巻き添えタダ死に」を防ぐ仕組み ──────────────────────────
+ *  例) 自分の場に0・2、相手の場に0・3・1。2でアタック時ヒラボン0を撃つと、
+ *      相手の0だけでなく自分の0も巻き添えで破壊される。だが自分の0はまだ
+ *      今ターン一度も攻撃していない＝攻撃の機会を完全に無駄にしてしまう。
+ *      正しい手順は「先に自分の0で攻撃 → 攻撃済みになったあとで2のヒラボン0」。
+ *      宣言で死ぬのは確定済みなので、死ぬ前に1回攻撃させた方が必ず得（最悪でも
+ *      攻撃せず死ぬのと同じ、ブロックされて相打ちなら相手も1体失うので得）。 */
+// 宣言予定の番号(declareNum)と同じ番号で、まだ今ターン攻撃していない自分のクリーチャーを探す
+// （宣言役自身は除く＝それは宣言と同時に攻撃するので対象外）。
+function cpuDoomedAlly(p,declareNum,hirabonAttackerId,ctx){
+  return ctx.me.field.find(c=>c.num===declareNum && c.id!==hirabonAttackerId && canAttack(p,c));
+}
+// 1体のアタッカーに絞って最善のターゲットを選ぶ（cpuChooseAttackの通常評価部分を単体用に簡略化）。
+// 死ぬ前に必ず攻撃させたいので、minScoreによる足切りは行わない（スコアが負でも攻撃する）。
+function cpuChooseAttackFor(p,atk,ctx){
+  const targets=[];
+  if(ctx.oppShields>0)targets.push({type:'shield'});
+  else targets.push({type:'direct'});
+  ctx.en.field.filter(c=>c.tapped&&(!c.linkedWith||c.linkRoot)).forEach(c=>targets.push({type:'creature',card:c}));
+  let best=null;
+  for(const t of targets){
+    const score=cpuScoreAttack(p,atk,t,ctx);
+    if(score===-Infinity)continue;
+    if(!best||score>best.score)best={attacker:atk,target:t,score};
+  }
+  if(!best)best={attacker:atk,target:ctx.oppShields>0?{type:'shield'}:{type:'direct'},score:0};
+  return best;
+}
+// {attacker,target}の攻撃判断を実際に実行する（cpuAttackStep末尾の通常実行部分を共通化）。
+function cpuDispatchAttack(p,a){
+  CPU._busy=true;
+  const atk=a.attacker, opp=p===1?2:1;
+  G.atkCard=null;
+  toast(`CPU: ${CJ[atk.color]}${atk.num} で攻撃`);
+  setTimeout(()=>{
+    if(G.gameOver)return;
+    if(a.target.type==='shield') execShieldAttack(atk,p);
+    else if(a.target.type==='direct'){
+      const bl=G.players[opp].field.filter(c=>(c.num===1||c.num===3)&&!c.tapped&&(!c.linkedWith||c.linkRoot));
+      execDirectWithBlock(atk,p,bl);
+    }else{
+      const t=G.players[opp].field.find(c=>c.id===a.target.card.id);
+      if(t)execCreatureAttackWithBlock(atk,t,p); else { CPU._busy=false; setTimeout(()=>cpuAttackStep(p),100); }
+    }
+  },550);
+}
 function cpuAttackStep(p){
   if(G.gameOver)return;
   if(G.turn!==p||G.phase!=='attack')return; // ターン/フェーズが変わっていたら古いsetTimeoutを無視
@@ -5894,6 +6002,8 @@ function cpuAttackStep(p){
       if(sv && sv.method==='hirabon'){
         const hp=cpuHirabonAttackPlan(p,hctx,sv.declareNum);
         if(hp){
+          const doomed=cpuDoomedAlly(p,hp.declareNum,hp.attacker.id,hctx);
+          if(doomed){ cpuDispatchAttack(p,cpuChooseAttackFor(p,doomed,hctx)); return; }
           CPU._hirabonAttackDone=true;
           CPU._busy=true;
           cpuExecHirabonAttack(p,hp);
@@ -5903,6 +6013,8 @@ function cpuAttackStep(p){
       // ② 通常のヒラボン：盤面利益が捨て札コストを十分上回るとき発動
       const hp=cpuHirabonAttackPlan(p,hctx);
       if(hp && hp.marginal>2){
+        const doomed=cpuDoomedAlly(p,hp.declareNum,hp.attacker.id,hctx);
+        if(doomed){ cpuDispatchAttack(p,cpuChooseAttackFor(p,doomed,hctx)); return; }
         CPU._hirabonAttackDone=true;
         CPU._busy=true;
         cpuExecHirabonAttack(p,hp);
@@ -5912,21 +6024,7 @@ function cpuAttackStep(p){
   }
   const a=cpuChooseAttack(p);
   if(!a){ CPU._busy=false; setTimeout(()=>{ if(!G.gameOver) endTurn(); },300); return; }
-  CPU._busy=true;
-  const atk=a.attacker, opp=p===1?2:1;
-  G.atkCard=null;
-  toast(`CPU: ${CJ[atk.color]}${atk.num} で攻撃`);
-  setTimeout(()=>{
-    if(G.gameOver)return;
-    if(a.target.type==='shield') execShieldAttack(atk,p);
-    else if(a.target.type==='direct'){
-      const bl=G.players[opp].field.filter(c=>(c.num===1||c.num===3)&&!c.tapped&&(!c.linkedWith||c.linkRoot));
-      execDirectWithBlock(atk,p,bl);
-    }else{
-      const t=G.players[opp].field.find(c=>c.id===a.target.card.id);
-      if(t)execCreatureAttackWithBlock(atk,t,p); else { CPU._busy=false; setTimeout(()=>cpuAttackStep(p),100); }
-    }
-  },550);
+  cpuDispatchAttack(p,a);
 }
 
 // CPUがクリーチャー（タップ済みナンバーズ）を攻撃するとき、防御側にブロックの機会を与える。
