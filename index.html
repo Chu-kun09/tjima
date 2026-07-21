@@ -116,6 +116,11 @@ html,body{width:100%;height:100dvh;overflow:hidden;background:var(--bg);color:#e
 .idesc{color:#7c8faa;font-size:10px;line-height:1.3;}
 #modal-btns{display:flex;gap:6px;justify-content:center;flex-wrap:wrap;}
 
+/* ─ FIELD CHECK (ブロック判断中にフィールド全体を見る) ─ */
+#field-return-btn{display:none;position:fixed;left:50%;transform:translateX(-50%);z-index:600;align-items:center;gap:6px;box-shadow:0 4px 18px rgba(0,0,0,.7);white-space:nowrap;}
+#btn-undo-mistap{position:absolute;right:8px;top:50%;transform:translateY(-50%);padding:4px 11px;font-size:11px;min-height:0;line-height:1.4;border-radius:12px;opacity:.75;box-shadow:none;}
+#btn-undo-mistap:active{opacity:1;}
+
 /* ─ TOAST ─ */
 #toast{position:fixed;bottom:calc(var(--bar-h,80px) + 12px);left:50%;transform:translateX(-50%);background:rgba(74,45,138,.97);color:#fff;font-family:'Fredoka One',cursive;font-size:15px;padding:9px 18px;border-radius:12px;z-index:999;display:none;text-align:center;max-width:82vw;pointer-events:none;}
 
@@ -409,6 +414,8 @@ getRedirectResult(auth).then(result=>{
     <div id="modal-btns"></div>
   </div>
 </div>
+
+<button id="field-return-btn" class="btn b" onclick="returnFromFieldCheck()">🔍 フィールド確認中 — タップで選択画面に戻る</button>
 
 <div id="toast"></div>
 <div id="cinfo"><div id="cinfo-title"></div><div id="cinfo-desc"></div></div>
@@ -957,7 +964,7 @@ function phaseCharge(){
   renderAll();
   setBar(`P${G.turn} — マナチャージ`,[
     {label:'チャージ',cls:'b',fn:doCharge,id:'btn-charge'},
-    {label:'しない ▶',cls:'n',fn:phaseSummon},
+    {label:'しない ▶',cls:'n',fn:()=>{phaseSummon();addUndoBtn(phaseCharge);}},
   ]);
   refreshChargeBtn();
 }
@@ -991,7 +998,7 @@ function phaseSummon(){
   const p=G.turn;
   const btns=[
     {label:'召喚',cls:'g',fn:doSummonSelected,id:'btn-summon'},
-    {label:'攻撃へ ▶',cls:'o',fn:phaseAttack},
+    {label:'攻撃へ ▶',cls:'o',fn:()=>{phaseAttack();addUndoBtn(phaseSummon);}},
     {label:'エンド',cls:'n',fn:endTurn},
   ];
   if(hasPairs)btns.splice(1,0,{label:'リンク',cls:'b',fn:showLinkMenu});
@@ -1135,6 +1142,7 @@ function execDirectWithBlock(atk,p,blockers){
       showSimpleModal(`🛡 ${atkLabel(atk)} がダイレクトアタック！ ブロックしますか？`,[
         {label:'ブロックする',cls:'g',fn:()=>{closeModal();showBlockPicker(atk,p,blockers,{type:'direct'});}},
         {label:'ブロックしない → ダイレクト',cls:'r',fn:()=>{closeModal();execDirectAttack(atk,p);}},
+        {label:'🔍 フィールド確認',cls:'b',fn:toggleFieldCheck},
       ],`${atkLabel(atk)} → あなたに直接攻撃（シールド0）｜ブロッカー: ${blockers.map(c=>CJ[c.color]+c.num).join(' / ')}`,opp);
     }
   }else{
@@ -1178,6 +1186,7 @@ function execShieldAttack(atk,p){
       showSimpleModal(`🛡 ${atkLabel(atk)} がシールドを攻撃！ ブロックしますか？`,[
         {label:'ブロックする',cls:'g',fn:()=>{closeModal();showBlockPicker(atk,p,blockers,{type:'shield'});}},
         {label:'ブロックしない',cls:'r',fn:()=>{closeModal();doShieldBreak(atk,p);}},
+        {label:'🔍 フィールド確認',cls:'b',fn:toggleFieldCheck},
       ],`${atkLabel(atk)}（ブレイク${cpuBreakerCountLabel(atk)}）→ あなたのシールド｜ブロッカー: ${blockers.map(c=>CJ[c.color]+c.num).join(' / ')}`,opp);
     }else{
       doShieldBreak(atk,p);
@@ -1214,7 +1223,8 @@ function showBlockPicker(atk,p,blockers,attackInfo){
       }else{
         doShieldBreak(atk,p);
       }
-    }}],
+    }},
+    {label:'🔍 フィールド確認',cls:'b',fn:toggleFieldCheck}],
     opp  // forPlayer = 防御側
   );
 }
@@ -1330,6 +1340,7 @@ function showCreaturePicker(atk,p){
               fxAttack(atk,p,card,opp);
               setTimeout(()=>execCreatureAttack(atk,card,p),500);
             }},
+            {label:'🔍 フィールド確認',cls:'b',fn:toggleFieldCheck},
           ],`${atkLabel(atk)}(ATK:${getAtkPower(atk)}) vs ${atkLabel(card)}　ブロッカー: ${untappedBlockers.map(c=>CJ[c.color]+c.num).join('/')}`,opp);
         }
       }else{
@@ -1868,7 +1879,8 @@ function handle0OnSummon(p,card){
   const pl=G.players[p];
   const hasFF=pl.field.some(c=>c.linkedWith&&c.num===5&&c.linkedWith.num===5&&c.id!==card.id);
   const has5=pl.field.some(c=>c.num===5&&c.id!==card.id);
-  if(!pl.graveyard.length||(!has5&&!hasFF)){
+  const hasPickableGrave=pl.graveyard.some(c=>c.num!==9); // 9は墓地からのチャージ対象外
+  if(!hasPickableGrave||(!has5&&!hasFF)){
     if(stContinueOrPhase(p))return;
     checkExTjia(p);setTimeout(()=>{if(G.phase==='summon')phaseSummon();},400);return;
   }
@@ -1876,7 +1888,7 @@ function handle0OnSummon(p,card){
 }
 
 function pick5Grave(p,remaining){
-  const grave=G.players[p].graveyard;
+  const grave=G.players[p].graveyard.filter(c=>c.num!==9); // 9は選択不可
   if(!remaining||!grave.length){checkExTjia(p);setTimeout(()=>{if(G.phase==='summon')phaseSummon();},400);return;}
   showCardPicker(`5の効果：墓地からマナへ`,`残${remaining}枚選択可`,grave,p,false,
     (card)=>{
@@ -1884,7 +1896,7 @@ function pick5Grave(p,remaining){
       card.tapped=false;G.players[p].mana.push(card);
       toast(`${CJ[card.color]}${card.num}をマナへ`);
       renderAll();
-      if(remaining-1>0&&G.players[p].graveyard.length)pick5Grave(p,remaining-1);
+      if(remaining-1>0&&G.players[p].graveyard.some(c=>c.num!==9))pick5Grave(p,remaining-1);
       else{closeModal();checkExTjia(p);setTimeout(()=>{if(G.phase==='summon')phaseSummon();},400);}
     },
     [{label:'スキップ',cls:'n',fn:()=>{closeModal();checkExTjia(p);setTimeout(()=>{if(G.phase==='summon')phaseSummon();},400);}}]
@@ -2009,6 +2021,16 @@ function checkDirect(targetP,attP){
 }
 
 // ── オンラインフェーズハンドラ ──
+// _pendingAtk（オンライン）が何を攻撃しているかを表す文字列。defP=防御側プレイヤー番号
+function pendingAtkTargetLabel(atk,defP){
+  if(!atk)return '相手';
+  if(atk.isDirect)return 'あなたに直接攻撃（シールド0）';
+  if(atk.targetCreatureId!=null){
+    const tc=G.players[defP]&&G.players[defP].field.find(c=>c.id==atk.targetCreatureId);
+    return tc?atkLabel(tc):'ナンバーズ';
+  }
+  return 'あなたのシールド';
+}
 function handleOnlinePhase(phase, myP){
   console.log('[handleOnlinePhase]',phase,'myP='+myP,'_pendingAtk=',JSON.stringify(G._pendingAtk));
   if(phase==='block-query'){
@@ -2020,13 +2042,15 @@ function handleOnlinePhase(phase, myP){
       // 防御側: ブロック確認モーダルを表示
       // 自分が防御側 → ブロック確認モーダル
       const atkCard=G.players[p]&&G.players[p].field.find(c=>c.id==atk.atkId);
+      const atkTitle=atkCard?atkLabel(atkCard):'相手のカード';
+      const targetLabel=pendingAtkTargetLabel(atk,opp);
       const blockers=G.players[opp].field.filter(c=>(c.num===1||c.num===3)&&!c.tapped&&(!c.linkedWith||c.linkRoot));
       if(blockers.length){
-        showSimpleModal(`🛡 ブロックしますか？`,[
+        showSimpleModal(`🛡 ${atkTitle} → ${targetLabel}｜ブロックしますか？`,[
           {label:'ブロックする',cls:'g',fn:()=>{
             closeModal();
             // ブロッカー選択
-            showCardPicker('ブロッカーを選択','選択して決定',blockers,opp,false,
+            showCardPicker(`🛡 ${atkTitle} → ${targetLabel} へブロッカーを選択`,'選択して決定',blockers,opp,false,
               (blocker)=>{
                 closeModal();
                 // ブロック先をGに記録してpush
@@ -2044,7 +2068,8 @@ function handleOnlinePhase(phase, myP){
                 G._blockerId=null;
                 pushState();
                 renderAll();
-              }}],opp
+              }},
+              {label:'🔍 フィールド確認',cls:'b',fn:toggleFieldCheck}],opp
             );
           }},
           {label:'ブロックしない',cls:'r',fn:()=>{
@@ -2070,6 +2095,7 @@ function handleOnlinePhase(phase, myP){
               renderAll();
             }
           }},
+          {label:'🔍 フィールド確認',cls:'b',fn:toggleFieldCheck},
         ],`ブロッカー: ${blockers.map(c=>CJ[c.color]+c.num).join(' / ')}`,opp);
       }else{
         // ブロッカーなし
@@ -3166,7 +3192,31 @@ function updateStats(){
 //  モーダルシステム
 // ═══════════════════════════════════
 let _scpForPlayer=null;
+// ─ フィールド確認（ブロック判断中などにモーダルを一時的に隠して盤面全体を見る）─
+// モーダルの中身はDOMに残したまま overlay だけ隠す→内容を保持したまま復帰できる
+function toggleFieldCheck(){
+  const ov=document.getElementById('modal-overlay');
+  ov.classList.remove('show');
+  const btn=document.getElementById('field-return-btn');
+  if(!btn)return;
+  const bar=document.getElementById('action-bar');
+  const topMode=!!(bar&&bar.classList.contains('top-mode'));
+  btn.style.top=topMode?'':'calc(var(--safe-t,0px) + 8px)';
+  btn.style.bottom=topMode?'calc(var(--safe-b,0px) + 8px)':'';
+  btn.style.display='flex';
+}
+function returnFromFieldCheck(){
+  const ov=document.getElementById('modal-overlay');
+  ov.classList.add('show');
+  hideFieldReturnBtn();
+}
+function hideFieldReturnBtn(){
+  const btn=document.getElementById('field-return-btn');
+  if(btn)btn.style.display='none';
+}
+
 function showCardPicker(title,subtitle,cards,owner,isMana,onSelect,extraBtns=[],forPlayer=null,labelFn=null){
+  hideFieldReturnBtn();
   _scpForPlayer=forPlayer;
   document.getElementById('modal-title').textContent=title;
   document.getElementById('modal-subtitle').textContent=subtitle;
@@ -3210,6 +3260,7 @@ function showCardPicker(title,subtitle,cards,owner,isMana,onSelect,extraBtns=[],
 }
 
 function showSimpleModal(title,btns,subtitle='',forPlayer=null){
+  hideFieldReturnBtn();
   document.getElementById('modal-title').textContent=title;
   document.getElementById('modal-subtitle').textContent=subtitle;
   document.getElementById('modal-list').innerHTML='';
@@ -3222,6 +3273,7 @@ function showSimpleModal(title,btns,subtitle='',forPlayer=null){
 
 // カスタムモーダル（ボディ関数でリストを直接操作）
 function showCustomModal(title,subtitle,bodyFn,btns,forPlayer=null){
+  hideFieldReturnBtn();
   document.getElementById('modal-title').textContent=title;
   document.getElementById('modal-subtitle').textContent=subtitle;
   document.getElementById('modal-list').innerHTML='';
@@ -3252,6 +3304,25 @@ function applyModalDir(forPlayer){
 // ═══════════════════════════════════
 //  アクションバー
 // ═══════════════════════════════════
+// ─ 誤タップ取消（「チャージしない」「攻撃へ」の一回だけの巻き戻し）─
+// フェーズを直接進めるだけで実際のカード操作を伴わないボタンにのみ使う。
+// 何か他のボタンを押す／実際のアクションを起こすと自動的に消える（setBar内でクリア）。
+function addUndoBtn(restoreFn){
+  clearUndoBtn();
+  const el=document.getElementById('action-buttons');
+  if(!el)return;
+  const btn=document.createElement('button');
+  btn.className='btn n';
+  btn.id='btn-undo-mistap';
+  btn.textContent='戻る';
+  btn.onclick=()=>{clearUndoBtn();restoreFn();};
+  el.appendChild(btn);
+  adjustLayout();
+}
+function clearUndoBtn(){
+  const b=document.getElementById('btn-undo-mistap');
+  if(b)b.remove();
+}
 function setBar(label,btns){
   const rb=document.getElementById('room-badge');
   if(rb)rb.textContent=ONLINE.enabled&&ONLINE.roomId?`ROOM: ${ONLINE.roomId}  P${ONLINE.myPlayer}で参加中`:'';
@@ -3261,7 +3332,7 @@ function setBar(label,btns){
     const btn=document.createElement('button');
     btn.className='btn '+b.cls;
     btn.textContent=b.label;
-    btn.onclick=b.fn;
+    btn.onclick=()=>{clearUndoBtn();b.fn();};
     if(b.id)btn.id=b.id;
     el.appendChild(btn);
   });
@@ -6052,6 +6123,7 @@ function execCreatureAttackWithBlock(atk,target,p){
       fxAttack(atk,p,target,opp);
       setTimeout(()=>execCreatureAttack(atk,target,p),500);
     }},
+    {label:'🔍 フィールド確認',cls:'b',fn:toggleFieldCheck},
   ],`${atkLabel(atk)}(ATK:${getAtkPower(atk)}) vs ${atkLabel(target)}　ブロッカー: ${blockers.map(c=>CJ[c.color]+c.num).join('/')}`,opp);
 }
 
@@ -6187,7 +6259,7 @@ show7PickModal=function(p){
 const _origPick5=pick5Grave;
 pick5Grave=function(p,remaining){
   if(isCpu(p)){
-    const grave=G.players[p].graveyard;
+    const grave=G.players[p].graveyard.filter(c=>c.num!==9); // 9は選択不可
     if(!remaining||!grave.length){ checkExTjia(p); setTimeout(()=>{ if(G.phase==='summon')phaseSummon(); },400); return; }
     // 価値の高い（番号の大きい）カードからマナへ回収
     const sorted=[...grave].sort((a,b)=>getAtkPower(b)-getAtkPower(a));
@@ -6195,7 +6267,7 @@ pick5Grave=function(p,remaining){
     G.players[p].graveyard=G.players[p].graveyard.filter(c=>c.id!==pick.id);
     pick.tapped=false; G.players[p].mana.push(pick);
     toast(`CPU: ${CJ[pick.color]}${pick.num}をマナへ`); renderAll();
-    if(remaining-1>0&&G.players[p].graveyard.length) setTimeout(()=>pick5Grave(p,remaining-1),300);
+    if(remaining-1>0&&G.players[p].graveyard.some(c=>c.num!==9)) setTimeout(()=>pick5Grave(p,remaining-1),300);
     else { checkExTjia(p); setTimeout(()=>{ if(G.phase==='summon')phaseSummon(); },400); }
     return;
   }
