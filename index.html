@@ -120,6 +120,8 @@ html,body{width:100%;height:100dvh;overflow:hidden;background:var(--bg);color:#e
 #field-return-btn{display:none;position:fixed;left:50%;transform:translateX(-50%);z-index:600;align-items:center;gap:6px;box-shadow:0 4px 18px rgba(0,0,0,.7);white-space:nowrap;}
 #btn-undo-mistap{position:absolute;right:8px;top:50%;transform:translateY(-50%);padding:4px 11px;font-size:11px;min-height:0;line-height:1.4;border-radius:12px;opacity:.75;box-shadow:none;}
 #btn-undo-mistap:active{opacity:1;}
+#cpu-log-btn{display:none;position:fixed;top:50%;left:6px;transform:translateY(-50%);z-index:150;padding:8px 9px;font-size:15px;border-radius:14px;opacity:.8;box-shadow:0 2px 12px rgba(0,0,0,.55);line-height:1;}
+#cpu-log-btn.show{display:block;}
 
 /* ─ TOAST ─ */
 #toast{position:fixed;bottom:calc(var(--bar-h,80px) + 12px);left:50%;transform:translateX(-50%);background:rgba(74,45,138,.97);color:#fff;font-family:'Fredoka One',cursive;font-size:15px;padding:9px 18px;border-radius:12px;z-index:999;display:none;text-align:center;max-width:82vw;pointer-events:none;}
@@ -416,6 +418,7 @@ getRedirectResult(auth).then(result=>{
 </div>
 
 <button id="field-return-btn" class="btn b" onclick="returnFromFieldCheck()">🔍 フィールド確認中 — タップで選択画面に戻る</button>
+<button id="cpu-log-btn" class="btn n" onclick="showCpuLogModal()" title="CPU対戦ログ">📋</button>
 
 <div id="toast"></div>
 <div id="cinfo"><div id="cinfo-title"></div><div id="cinfo-desc"></div></div>
@@ -425,6 +428,7 @@ getRedirectResult(auth).then(result=>{
   <div id="win-title"></div>
   <div id="win-sub"></div>
   <div id="win-room-info" style="font-size:12px;color:#888;margin-top:6px;"></div>
+  <button id="win-cpu-log-btn" class="btn b" style="font-size:13px;padding:8px 20px;margin-top:6px;display:none;" onclick="showCpuLogModal()">📋 CPU対戦ログをコピー</button>
   <button class="btn g" style="font-size:17px;padding:12px 36px;margin-top:10px" onclick="retryGame()">もう一度（同じルームで）</button>
   <button class="btn n" style="font-size:13px;padding:8px 20px;margin-top:6px" onclick="location.reload()">タイトルに戻る</button>
 </div>
@@ -924,6 +928,7 @@ function phaseUntap(){
     return;
   }
   G.phase='untap';G.selCard=null;G.selMana=[];G.atkCard=null;
+  if(typeof cpuLogTurnStart==='function')cpuLogTurnStart(G.turn);
   const pl=G.players[G.turn];
   pl.field.forEach(c=>{c.tapped=false;c.summonedThisTurn=false;});
   pl.mana.forEach(c=>c.tapped=false);
@@ -2842,6 +2847,7 @@ function winGame(p,reason){
   G.gameOver=true;
   G._winner=p;
   G._winReason=reason;
+  if(typeof cpuLogGameEnd==='function')cpuLogGameEnd(p,reason);
   pushState();
   // 名前を取得（オンライン・ローカル共通）
   const getPN=(n)=>{
@@ -2853,6 +2859,8 @@ function winGame(p,reason){
   const myName=getPN(myP);
   document.getElementById('win-title').textContent=`🎉 ${winnerName} の勝利！`;
   document.getElementById('win-sub').textContent=reason;
+  const winLogBtn=document.getElementById('win-cpu-log-btn');
+  if(winLogBtn)winLogBtn.style.display=(typeof CPU!=='undefined'&&CPU.enabled)?'inline-block':'none';
   const ri=document.getElementById('win-room-info');
   if(ri){
     if(ONLINE.enabled&&ONLINE.roomId){
@@ -4296,6 +4304,102 @@ const CPU_W = {
   takeSingle:1.0,   // シングルブレイカー攻撃を「受け得」と見て消極ブロックする度合い（0で常時ブロック）
   tripleBlock:0.7,  // 0(トリプル)の攻撃を受けると1枚墓地送りになる損失のブロック加点係数
 };
+
+/* ════════════════ 2.5 CPU対戦ログ（プレイ振り返り用）════════════════
+   CPU自身の意思決定を人が読める形で記録する。ゲームロジックには一切影響せず、
+   CPU.enabled中のみ蓄積し、コピー/閲覧専用のモーダルで確認できる。 */
+let CPU_LOG=[];
+let CPU_LOG_TURN=0;
+function cpuLogReset(){ CPU_LOG=[]; CPU_LOG_TURN=0; }
+function cpuLogCardStr(c){ return c?`${CJ[c.color]}${c.num}`:'?'; }
+function cpuLogHandStr(p){
+  const h=(G.players[p]&&G.players[p].hand)||[];
+  return h.length?h.map(cpuLogCardStr).join(',') : '(なし)';
+}
+function cpuLogFieldStr(p){
+  const f=(G.players[p]&&G.players[p].field)||[];
+  return f.length?f.map(c=>cpuLogCardStr(c)+(c.tapped?'T':'')).join(',') : '(なし)';
+}
+// 各ターンの開始時に呼ぶ（人間・CPU双方の番で呼んでよい。ログにはCPUの手番だけが記録される）
+function cpuLogTurnStart(p){
+  if(typeof CPU==='undefined'||!CPU.enabled)return;
+  CPU_LOG_TURN++;
+  CPU_LOG.push({turn:CPU_LOG_TURN,player:p,kind:'turn',text:`── ターン${CPU_LOG_TURN}：${isCpu(p)?'CPU':'あなた'}(P${p}) ──`});
+}
+// p=判断を下したプレイヤー。CPU自身の判断以外は記録しない。
+function cpuLog(p,kind,text,extra){
+  if(typeof CPU==='undefined'||!CPU.enabled)return;
+  if(!isCpu(p))return;
+  extra=extra||{};
+  let scoreStr=null;
+  if(extra.score===Infinity)scoreStr='∞';
+  else if(extra.score===-Infinity)scoreStr='-∞';
+  else if(extra.score!=null && !isNaN(extra.score))scoreStr=String(Math.round(extra.score*100)/100);
+  const opp=p===1?2:1;
+  CPU_LOG.push({
+    turn:CPU_LOG_TURN, player:p, kind, text, score:scoreStr,
+    hand:cpuLogHandStr(p), myField:cpuLogFieldStr(p), oppField:cpuLogFieldStr(opp),
+    myShields:((G.players[p]&&G.players[p].shields)||[]).filter(Boolean).length,
+    oppShields:((G.players[opp]&&G.players[opp].shields)||[]).filter(Boolean).length,
+  });
+}
+function cpuLogGameEnd(winner,reason){
+  if(typeof CPU==='undefined'||!CPU.enabled)return;
+  CPU_LOG.push({turn:CPU_LOG_TURN,kind:'result',text:`${isCpu(winner)?'CPU':'あなた'}(P${winner}) の勝利（${reason||''}）`});
+}
+// ログ配列を、コピーして振り返りやすいテキストに整形する
+function cpuLogFormat(){
+  if(!CPU_LOG.length)return '(ログがありません。CPU対戦をプレイすると記録されます)';
+  const lines=[];
+  lines.push('═══ CPU対戦ログ（振り返り用） ═══');
+  lines.push(`対戦相手: ${CPU.tokuda?'😈 徳田さん':'🤖 CPU'}（P${CPU.player}） / 先攻: ${Number(CPU.firstTurn)===2?'CPU':'あなた'}`);
+  const TAG={
+    charge:'💧チャージ', summon:'🃏召喚', attack:'⚔攻撃', block:'🛡ブロック',
+    link:'🔗リンク', extjia:'⭐エクTジア宣言', hirabon:'💥ヒラボン', bounce:'👋バウンス(6)',
+  };
+  for(const e of CPU_LOG){
+    if(e.kind==='turn'){ lines.push(''); lines.push(e.text); continue; }
+    if(e.kind==='result'){ lines.push(''); lines.push(`── 結果：${e.text} ──`); continue; }
+    const tag=TAG[e.kind]||e.kind;
+    const scorePart=e.score!=null?` (評価値 ${e.score})`:'';
+    lines.push(`[${tag}] ${e.text}${scorePart}`);
+    lines.push(`　　手札:${e.hand} ／ CPU場:${e.myField} ／ 相手場:${e.oppField} ／ シールド CPU${e.myShields}-相手${e.oppShields}`);
+  }
+  return lines.join('\n');
+}
+// ログ全文をモーダルで表示し、コピーできるようにする
+function showCpuLogModal(){
+  const text=cpuLogFormat();
+  showCustomModal('🤖 CPU対戦ログ','振り返り用：下のボタンでコピーできます',
+    ()=>{
+      const list=document.getElementById('modal-list');
+      list.innerHTML='';
+      const ta=document.createElement('textarea');
+      ta.id='cpu-log-textarea';
+      ta.readOnly=true;
+      ta.value=text;
+      ta.style.cssText='width:100%;box-sizing:border-box;min-height:44vh;max-height:50vh;background:#0a0e1a;color:#d1d5db;border:1px solid #374151;border-radius:8px;padding:8px;font-size:11px;font-family:monospace;white-space:pre-wrap;line-height:1.5;';
+      ta.onclick=()=>ta.select();
+      list.appendChild(ta);
+    },
+    [
+      {label:'📋 コピー',cls:'g',fn:()=>{
+        const fallback=()=>{
+          try{
+            const ta=document.getElementById('cpu-log-textarea');
+            ta.select();ta.setSelectionRange(0,999999);
+            document.execCommand('copy');
+            toast('コピーしました');
+          }catch(e){ toast('コピーできません。テキストを長押しして選択してください'); }
+        };
+        if(navigator.clipboard && navigator.clipboard.writeText){
+          navigator.clipboard.writeText(text).then(()=>toast('コピーしました')).catch(fallback);
+        }else fallback();
+      }},
+      {label:'閉じる',cls:'n',fn:closeModal},
+    ]
+  );
+}
 
 /* ════════════════ 3. 盤面評価・共通ヘルパー ════════════════ */
 function cpuEvalBoard(p){
@@ -5816,7 +5920,10 @@ function cpuPayMana(p,cost){
 function cpuTryLinks(p){
   const f=G.players[p].field.filter(c=>!c.linkedWith);
   for(let i=0;i<f.length;i++)for(let j=i+1;j<f.length;j++){
-    if(validLink(f[i],f[j])){ doLink(f[i],f[j],p); return true; }
+    if(validLink(f[i],f[j])){
+      cpuLog(p,'link',`${CJ[f[i].color]}${f[i].num} と ${CJ[f[j].color]}${f[j].num} をリンク`,{});
+      doLink(f[i],f[j],p); return true;
+    }
   }
   return false;
 }
@@ -5826,6 +5933,7 @@ function cpuTryLinks(p){
 function cpuDeclareExTjia(p){
   if(CPU._exTjiaDeclaring)return;     // 二重起動防止
   CPU._exTjiaDeclaring=true;
+  cpuLog(p,'extjia','⭐エクTジア宣言（0の4色成立）',{});
   const pl=G.players[p];
   const order=['blue','green','yellow','red'];   // 並べる順（演出用）
   const onField=new Set(pl.field.filter(c=>c.num===0).map(c=>c.color));
@@ -5871,6 +5979,7 @@ function cpuSummonStep(p){
   if(cpuTryLinks(p))return;                          // リンク（doLinkがphaseSummonを再呼び出し）
   const pick=cpuChooseBestPlay(p);
   if(pick){ cpuExecSummon(p,pick); return; }
+  cpuLog(p,'summon','召喚パス（出せる/出す価値のあるカードなし）',{});
   setTimeout(()=>{ if(!G.gameOver) phaseAttack(); },350); // 召喚終了 → 攻撃へ
 }
 function cpuExecSummon(p,pick){
@@ -5878,6 +5987,7 @@ function cpuExecSummon(p,pick){
   CPU._plan=pick.plan||null;
   if(card.num===7) CPU._7plan={chain:[...(pick.plan&&pick.plan.chain7Ids||[])],final:(pick.plan&&pick.plan.finalMoveTargetId!=null)?pick.plan.finalMoveTargetId:null,finalMove:(pick.plan&&pick.plan.finalMove)||null};
   const cost=getSummonCost(p,card);
+  cpuLog(p,'summon',`${CJ[card.color]}${card.num}を召喚（コスト${cost}）`,{score:pick.score});
   cpuPayMana(p,cost);
   toast(`CPU: ${CJ[card.color]}${card.num} を召喚`);
   setTimeout(()=>{ if(!G.gameOver) completeSummon(p,card); },500);
@@ -5957,6 +6067,8 @@ function cpuExecSingleAttack(p, atk){
     if(!best||s>best.score)best={t,score:s};
   }
   const tgt=best?best.t:(ctx.oppShields>0?{type:'shield'}:{type:'direct'});
+  const tLabel1=tgt.type==='shield'?'シールド':tgt.type==='direct'?'ダイレクト':`${CJ[tgt.card.color]}${tgt.card.num}(場)`;
+  cpuLog(p,'attack',`(ヒラボン後)${CJ[atk.color]}${atk.num}で${tLabel1}を攻撃`,{score:best?best.score:null});
   CPU._busy=true;
   toast(`CPU: ${CJ[atk.color]}${atk.num} で攻撃`);
   setTimeout(()=>{
@@ -5974,6 +6086,7 @@ function cpuExecSingleAttack(p, atk){
 // アタック時ヒラボン一式を実行：捨て→宣言→両者破壊→攻撃
 function cpuExecHirabonAttack(p, hp){
   const opp=p===1?2:1, dc=hp.discardCard;
+  cpuLog(p,'hirabon',`${CJ[dc.color]}${dc.num}を捨てて${hp.declareNum}を宣言（両者${hp.declareNum}を破壊）`,{score:hp.marginal});
   // 1) 手札を1枚捨てる（4はsendToGraveの仕様でマナへ行く）
   G.players[p].hand=G.players[p].hand.filter(c=>c.id!==dc.id);
   sendToGrave(p,dc);
@@ -6030,6 +6143,8 @@ function cpuDispatchAttack(p,a){
   CPU._busy=true;
   const atk=a.attacker, opp=p===1?2:1;
   G.atkCard=null;
+  const tLabel2=a.target.type==='shield'?'シールド':a.target.type==='direct'?'ダイレクト':`${CJ[a.target.card.color]}${a.target.card.num}(場)`;
+  cpuLog(p,'attack',`${CJ[atk.color]}${atk.num}で${tLabel2}を攻撃`,{score:a.score});
   toast(`CPU: ${CJ[atk.color]}${atk.num} で攻撃`);
   setTimeout(()=>{
     if(G.gameOver)return;
@@ -6094,7 +6209,7 @@ function cpuAttackStep(p){
     }
   }
   const a=cpuChooseAttack(p);
-  if(!a){ CPU._busy=false; setTimeout(()=>{ if(!G.gameOver) endTurn(); },300); return; }
+  if(!a){ cpuLog(p,'attack','攻撃終了（これ以上の攻撃なし）',{}); CPU._busy=false; setTimeout(()=>{ if(!G.gameOver) endTurn(); },300); return; }
   cpuDispatchAttack(p,a);
 }
 
@@ -6111,8 +6226,8 @@ function execCreatureAttackWithBlock(atk,target,p){
   // 防御側もCPUの場合（通常は起きないが保険）：自動でブロック判断
   if(!ONLINE.enabled && isCpu(opp)){
     const d=cpuChooseBlock(opp,atk,blockers,{isDirect:false,targetCard:target});
-    if(d.block) cpuDoBlock(atk,p,d.blocker,opp);
-    else { fxAttack(atk,p,target,opp); setTimeout(()=>execCreatureAttack(atk,target,p),500); }
+    if(d.block) cpuDoBlock(atk,p,d.blocker,opp,d.value);
+    else { cpuLog(opp,'block',`${CJ[atk.color]}${atk.num}の${CJ[target.color]}${target.num}への攻撃をブロックしない`,{score:d.value}); fxAttack(atk,p,target,opp); setTimeout(()=>execCreatureAttack(atk,target,p),500); }
     return;
   }
   // 防御側は人間：ブロック確認モーダルを表示（シールド/ダイレクト攻撃と同じ体験）
@@ -6139,8 +6254,11 @@ phaseCharge=function(){
   if(!G.gameOver && isCpu(G.turn)){
     G.phase='charge'; G.selCard=null; renderAll();
     const ch=cpuChooseManaCharge(G.turn);
-    if(ch){ toast(`CPU: ${CJ[ch.card.color]}${ch.card.num} をチャージ`); G.selCard=ch.card; setTimeout(doCharge,600); }
-    else setTimeout(phaseSummon,600);
+    if(ch){
+      cpuLog(G.turn,'charge',`${CJ[ch.card.color]}${ch.card.num}をチャージ`,{score:ch.chargeScore});
+      toast(`CPU: ${CJ[ch.card.color]}${ch.card.num} をチャージ`); G.selCard=ch.card; setTimeout(doCharge,600);
+    }
+    else { cpuLog(G.turn,'charge','チャージしない',{}); setTimeout(phaseSummon,600); }
     return;
   }
   _origPhaseCharge.apply(this,arguments);
@@ -6180,6 +6298,7 @@ show6BounceModal=function(p){
     const chosen=t||cpuChoose6Bounce(p,targets);
     if(!chosen){ after6Bounce(p); return; }
     if(chosen.linkedWith&&chosen.linkRoot){ show6LinkedChoiceModal(p,opp,chosen,chosen.linkedWith); return; }
+    cpuLog(p,'bounce',`${CJ[chosen.color]}${chosen.num}を手札に戻す（6の効果）`,{});
     chosen.linkRoot=false; chosen.tapped=false;
     G.players[opp].field=G.players[opp].field.filter(c=>c.id!==chosen.id);
     G.players[opp].hand.push(chosen);
@@ -6318,8 +6437,9 @@ if(_origShowBlockPicker){
       const isDirect   = !!(attackInfo ? attackInfo.type==='direct' : (myShields===0));
       const d = cpuChooseBlock(opp, atk, blockers, { isDirect, targetCard: isCreature ? attackInfo.card : null });
       if(d.block){
-        cpuDoBlock(atk,p,d.blocker,opp);
+        cpuDoBlock(atk,p,d.blocker,opp,d.value);
       }else{
+        cpuLog(opp,'block',`${CJ[atk.color]}${atk.num}の攻撃をブロックしない`,{score:d.value});
         // ブロックしない判定 → 本来選ばれた攻撃対象へ正しく解決する
         if(isCreature){
           // ★バグ修正：ナンバーズ攻撃はシールドではなく対象クリーチャーとバトルする
@@ -6339,7 +6459,8 @@ if(_origShowBlockPicker){
 }
 
 // CPUがブロックを実行する共通処理：ブロッカーをタップしてからクリーチャー戦に入る
-function cpuDoBlock(atk,p,blocker,opp){
+function cpuDoBlock(atk,p,blocker,opp,value){
+  cpuLog(opp,'block',`${CJ[blocker.color]}${blocker.num}で${CJ[atk.color]}${atk.num}をブロック`,{score:value});
   blocker.tapped=true;                          // ブロックしたブロッカーはタップされる
   if(blocker.linkedWith)blocker.linkedWith.tapped=true;
   toast(`CPU: ${CJ[blocker.color]}${blocker.num}でブロック`);
@@ -6353,8 +6474,8 @@ execShieldAttack=function(atk,p){
   if(!ONLINE.enabled && isCpu(opp)){
     const blockers=G.players[opp].field.filter(c=>(c.num===1||c.num===3)&&!c.tapped&&(!c.linkedWith||c.linkRoot));
     const d=cpuChooseBlock(opp,atk,blockers,{isDirect:false});
-    if(d.block){ cpuDoBlock(atk,p,d.blocker,opp); }
-    else doShieldBreak(atk,p);
+    if(d.block){ cpuDoBlock(atk,p,d.blocker,opp,d.value); }
+    else { cpuLog(opp,'block',`${CJ[atk.color]}${atk.num}のシールド攻撃をブロックしない`,{score:d.value}); doShieldBreak(atk,p); }
     return;
   }
   _origShieldAtk.apply(this,arguments);
@@ -6365,8 +6486,8 @@ execDirectWithBlock=function(atk,p,blockers){
   if(!ONLINE.enabled && isCpu(opp)){
     const bl=blockers||G.players[opp].field.filter(c=>(c.num===1||c.num===3)&&!c.tapped&&(!c.linkedWith||c.linkRoot));
     const d=cpuChooseBlock(opp,atk,bl,{isDirect:true});
-    if(d.block){ cpuDoBlock(atk,p,d.blocker,opp); }
-    else execDirectAttack(atk,p);
+    if(d.block){ cpuDoBlock(atk,p,d.blocker,opp,d.value); }
+    else { cpuLog(opp,'block',`${CJ[atk.color]}${atk.num}のダイレクト攻撃をブロックしない`,{score:d.value}); execDirectAttack(atk,p); }
     return;
   }
   _origDirect.apply(this,arguments);
@@ -6494,15 +6615,18 @@ function startCpuGame(opts){
   CPU.enabled=true; CPU.player=2; CPU._plan=null; CPU._7plan=null;
   CPU.firstTurn=first; CPU._opp2NoShow=0;
   CPU.revealHand=revealHand; CPU.tokuda=tokuda;
+  if(typeof cpuLogReset==='function')cpuLogReset();
+  const logBtn=document.getElementById('cpu-log-btn');
+  if(logBtn)logBtn.classList.add('show');
   ONLINE.enabled=false; ONLINE.roomId=null; ONLINE.myPlayer=null;
   ONLINE.names={1:'あなた',2:(tokuda?'😈 徳田さん':(revealHand?'🔍 CPU(公開)':'🤖 CPU'))};
   startGame();
 }
 // ローカル/オンライン開始時はCPUを無効化
 const _origStartOffline=startOffline;
-startOffline=function(){ CPU.enabled=false; _origStartOffline.apply(this,arguments); };
+startOffline=function(){ CPU.enabled=false; const lb=document.getElementById('cpu-log-btn'); if(lb)lb.classList.remove('show'); _origStartOffline.apply(this,arguments); };
 const _origShowOnlineMenu=showOnlineMenu;
-showOnlineMenu=function(){ CPU.enabled=false; _origShowOnlineMenu.apply(this,arguments); };
+showOnlineMenu=function(){ CPU.enabled=false; const lb=document.getElementById('cpu-log-btn'); if(lb)lb.classList.remove('show'); _origShowOnlineMenu.apply(this,arguments); };
 
 // 先攻・後攻の選択モーダルを出してからCPU対戦を開始する
 function chooseCpuOrder(opts){
